@@ -1681,3 +1681,25 @@ the lifecycle assertable.
   is the seam for extracting a standalone `packages/chat-ui` later.
 - Keep this spec at **intent + boundary + invariants**; per-component behavior belongs in the
   components' jsdoc, per-tool detail in [tools/SPEC.md](tools/SPEC.md).
+
+### Scheduled prompt controls
+
+The scheduling extension is disabled for an empty composer. Its concave edge follows the
+Send pill. New schedules use the composer's draft; only editing an existing schedule shows
+a separate prompt editor. The date uses the native picker; date and a directly editable HH:mm time share
+one compact bordered row. There is no graphical clock picker. Numeric fields select their content on focus.
+The last chosen absolute time is retained across closes until five minutes of inactivity;
+then a new opening defaults to four hours ahead, rounded up to a whole minute.
+Quick delays are 10 minutes, 1 hour, 12 hours and 24 hours. Scheduled rows live in a
+scrollable full-width composer slot. Remaining time refreshes every second: hours/minutes at one hour or more,
+minutes/seconds below one hour. It rounds up to the displayed unit so zero is never
+displayed before the due instant. Server delivery remains authoritative.
+
+Each scheduled row exposes a compact Send now action before edit/delete. It requests the
+server scheduler to deliver through the usual follow-up lane and disables repeated clicks
+while the request is pending. A failed delivery stays visible in the scheduled list.
+
+Scheduled prompts snapshot model and reasoning using the existing ModelEffortPicker. A compact
+provider icon in each scheduled row exposes the full pair on hover and opens the same picker;
+only the editor for an already saved schedule contains that picker. New schedules
+automatically snapshot the composer pair without showing a second model control. These choices update only that schedule.

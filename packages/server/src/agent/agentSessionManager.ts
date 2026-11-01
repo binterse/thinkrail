@@ -25,6 +25,7 @@ import type {
 	ImageContent,
 	Model,
 	PiEvent,
+	PromptModelSelection,
 	QueuedMessageContent,
 	QueueLane,
 	RefreshedModels,
@@ -155,12 +156,17 @@ import {
 const log = logger("agent");
 
 interface TrackedQueuedMessage {
+	modelSelection?: PromptModelSelection;
 	id: number;
 	text: string;
 	images?: ImageContent[];
 }
 
 interface Entry {
+	dequeuedFollowUps: TrackedQueuedMessage[];
+	pendingModelSelection?: PromptModelSelection | undefined;
+	clearingQueue: boolean;
+	priorFollowUpMode?: "all" | "one-at-a-time" | undefined;
 	subagents: Subagents;
 	commands: BackgroundCommands;
 	unsubscribeCommands: () => void;
@@ -1131,6 +1137,8 @@ async function prepareSessionEntry(
 	const { sessionId } = session;
 	let terminal: AgentSettlement | null = null;
 	const entry: Entry = {
+		dequeuedFollowUps: [],
+		clearingQueue: false,
 		commands,
 		subagents,
 		resourcesClosing: false,
@@ -1195,7 +1203,19 @@ async function prepareSessionEntry(
 		}
 		if (event.type === "queue_update") {
 			synchronizeQueuedLane(entry, "steering", displayedLane(entry, "steering", event.steering));
+			const before = [...entry.queuedMessages.followUp];
 			synchronizeQueuedLane(entry, "followUp", displayedLane(entry, "followUp", event.followUp));
+			if (!entry.clearingQueue) {
+				const remaining = new Set(entry.queuedMessages.followUp.map((item) => item.id));
+				entry.dequeuedFollowUps.push(...before.filter((item) => !remaining.has(item.id)));
+			}
+			if (
+				entry.priorFollowUpMode !== undefined &&
+				!entry.queuedMessages.followUp.some((item) => item.modelSelection)
+			) {
+				session.agent.followUpMode = entry.priorFollowUpMode;
+				entry.priorFollowUpMode = undefined;
+			}
 		}
 		if (event.type === "compaction_start") entry.piCompactionInProgress = true;
 		if (event.type === "compaction_end") {
@@ -1251,6 +1271,30 @@ async function prepareSessionEntry(
 		}
 		if (event.type === "agent_settled") terminal = null;
 	});
+
+	const previousPrepareRequest = session.agent.prepareRequest;
+	session.agent.prepareRequest = async (request, signal) => {
+		const selection = entry.pendingModelSelection;
+		if (selection) {
+			entry.pendingModelSelection = undefined;
+			await applyPromptModelSelection(entry, selection);
+		}
+		return (await previousPrepareRequest?.(request, signal)) ?? undefined;
+	};
+	const unsubscribeQueueSelection = session.agent.subscribe((event) => {
+		if (event.type === "message_start" && event.message.role === "user") {
+			const text = userContentText(event.message.content);
+			const consumed = entry.dequeuedFollowUps.find((item) => item.text === text);
+			entry.pendingModelSelection = consumed?.modelSelection;
+			entry.dequeuedFollowUps = [];
+		}
+		if (event.type === "agent_end") entry.dequeuedFollowUps = [];
+	});
+	const unsubscribeSession = entry.unsubscribe;
+	entry.unsubscribe = () => {
+		unsubscribeSession();
+		unsubscribeQueueSelection();
+	};
 
 	const reportExtensionError = (failure: ExtensionError): void => {
 		const line = `extension ${failure.extensionPath} failed on ${failure.event}: ${failure.error}`;
@@ -2225,6 +2269,7 @@ function hasQueuedImages(entry: Entry): boolean {
 function queueContentOf(entry: Entry): SessionQueueContent {
 	synchronizeQueueFromSession(entry);
 	const project = (message: TrackedQueuedMessage): QueuedMessageContent => ({
+		...(message.modelSelection ? { modelSelection: message.modelSelection } : {}),
 		text: message.text,
 		...(message.images && message.images.length > 0 ? { images: [...message.images] } : {}),
 	});
@@ -2250,8 +2295,10 @@ async function queueSessionMessage<T>(
 	text: string,
 	images: ImageContent[] | undefined,
 	send: () => Promise<T>,
+	modelSelection?: PromptModelSelection,
 ): Promise<T> {
 	const tracked: TrackedQueuedMessage = {
+		...(modelSelection ? { modelSelection } : {}),
 		id: entry.nextQueuedMessageId++,
 		text,
 		...(images && images.length > 0 ? { images: [...images] } : {}),
@@ -2327,22 +2374,63 @@ export async function followUpSession(
 	await followUpEntry(mustGetEntry(sessionId), text, images, true);
 }
 
+export function validatePromptModelSelection(
+	sessionId: string,
+	selection: PromptModelSelection,
+): void {
+	const entry = mustGetEntry(sessionId);
+	const model = resolveWireModel(entry.generation.runtime, selection.model);
+	if (!getSupportedThinkingLevels(model).includes(selection.thinkingLevel))
+		throw new Error("Unsupported reasoning level for scheduled model.");
+}
+
+async function applyPromptModelSelection(
+	entry: Entry,
+	selection: PromptModelSelection,
+): Promise<void> {
+	validatePromptModelSelection(entry.session.sessionId, selection);
+	const model = resolveWireModel(entry.generation.runtime, selection.model);
+	await entry.session.setModel(model);
+	entry.session.setThinkingLevel(selection.thinkingLevel);
+}
+
+export async function scheduleFollowUpSession(
+	sessionId: string,
+	text: string,
+	images?: ImageContent[],
+	modelSelection?: PromptModelSelection,
+): Promise<void> {
+	if (modelSelection) validatePromptModelSelection(sessionId, modelSelection);
+	await followUpEntry(mustGetEntry(sessionId), text, images, false, modelSelection);
+}
+
 async function followUpEntry(
 	entry: Entry,
 	text: string,
 	images: ImageContent[] | undefined,
 	answersDialogs: boolean,
+	modelSelection?: PromptModelSelection,
 ): Promise<void> {
 	admitRun(entry);
 	if (entry.session.isStreaming) {
-		const disposition = await queueSessionMessage(entry, "followUp", text, images, () =>
-			entry.session.followUp(text, images),
+		if (modelSelection && entry.priorFollowUpMode === undefined) {
+			entry.priorFollowUpMode = entry.session.agent.followUpMode;
+			entry.session.agent.followUpMode = "one-at-a-time";
+		}
+		const disposition = await queueSessionMessage(
+			entry,
+			"followUp",
+			text,
+			images,
+			() => entry.session.followUp(text, images),
+			modelSelection,
 		);
 		if (answersDialogs && disposition === "queued") cancelExtUiForSession(entry.session.sessionId);
 		return;
 	}
 	const release = admitPreflight(entry);
 	try {
+		if (modelSelection) await applyPromptModelSelection(entry, modelSelection);
 		await entry.session.prompt(
 			text,
 			answersDialogs ? answeringDialogs(entry, images) : images ? { images } : undefined,
@@ -2403,7 +2491,14 @@ function clearEntryQueue(entry: Entry, requireTextOnly = false): SessionQueueCon
 	if (requireTextOnly && hasQueuedImages(entry)) {
 		throw new Error("Cannot restore queued image messages as text");
 	}
-	entry.session.clearQueue();
+	entry.clearingQueue = true;
+	try {
+		entry.session.clearQueue();
+	} finally {
+		entry.clearingQueue = false;
+		entry.dequeuedFollowUps = [];
+		entry.pendingModelSelection = undefined;
+	}
 	entry.stuckEmptyDeliveries = { steering: 0, followUp: 0 };
 	return content;
 }
@@ -2433,6 +2528,7 @@ export async function removeQueuedSession(
 				message.text,
 				message.images ? [...message.images] : undefined,
 				false,
+				message.modelSelection,
 			);
 		}
 		if (!session.isStreaming && session.pendingMessageCount > 0) {
@@ -2443,6 +2539,7 @@ export async function removeQueuedSession(
 					message.text,
 					message.images ? [...message.images] : undefined,
 					false,
+					message.modelSelection,
 				);
 			}
 		}

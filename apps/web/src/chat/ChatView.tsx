@@ -934,6 +934,23 @@ export default function ChatView({
 					onSelectModel={onSelectModel}
 					onSelectThinking={onSelectThinking}
 					onSubmit={onSubmit}
+					workspaceId={workspaceId}
+					sessionId={sessionId}
+					connectionGeneration={connectionGeneration}
+					onSchedule={(requestId, dueAt, text, images, modelSelection) =>
+						getTransport().request("scheduledPrompts.create", {
+							modelSelection,
+							requestId,
+							id: requestId,
+							workspaceId,
+							sessionId,
+							text,
+							dueAt,
+							createdAt: Date.now(),
+							status: "scheduled",
+							...(images.length ? { images } : {}),
+						})
+					}
 					onAbort={onAbort}
 					onHistoryOpen={onHistoryOpen}
 					onPickTemplate={onPickTemplate}

@@ -267,6 +267,10 @@ bun run desktop:build                # package without opening it
 [`CONTRIBUTING.md`](CONTRIBUTING.md) covers the checks, the end-to-end suites, desktop packaging, and the
 repository layout.
 
+Scheduled prompts wait locally before joining the normal
+follow-up queue; each waiting row can also be sent immediately with **Send now**.
+Each schedule retains its own provider, model and reasoning level; edit the saved row to change them.
+
 ## Contributing
 
 Contributions are welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md). This project and community are

@@ -1600,3 +1600,13 @@ the `/mcp` command stay pi's; ThinkRail owns what a multi-session GUI host owes 
   session's **create-time template snapshot** — a template saved mid-session is **NOT** seen by an
   already-open session's typed-through path (pi passes unknown `/name` text through verbatim). The
   composer's `/` menu path is always fresh via `template.list` (see `templates/SPEC.md` freshness rule).
+
+### Model-pinned follow-ups
+
+Queued content can retain a provider/model and thinking level. The normal session queue remains
+authoritative. Capture consumed host metadata on queue updates, confirm it against the actual
+user message on the public awaited Agent subscription, and apply through SDK setModel /
+setThinkingLevel immediately before the public prepareRequest hook. Queue edits preserve this
+metadata; explicit clears discard pending selection. Pinned follow-ups drain one at a time using
+the public Agent queue-mode property, restoring its prior mode when no pinned item remains.
+Selection is session-local, not a change to global defaults.

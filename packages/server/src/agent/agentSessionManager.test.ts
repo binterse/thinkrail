@@ -71,6 +71,7 @@ import {
 	renameSession,
 	requestSessionReload,
 	respondToTool,
+	scheduleFollowUpSession,
 	setAgentReviewEnabledResolver,
 	setSessionCreatedPublisher,
 	setSessionDeletedPublisher,
@@ -4213,3 +4214,140 @@ test("an extension failing in session_start reaches the client, named, before th
 		rmSync(extensionPath, { force: true });
 	}
 });
+
+test("scheduled follow-ups keep per-prompt provider/model/reasoning behind existing queue entries", async () => {
+	const a = createFauxCore({
+		provider: "scheduled-a",
+		api: "scheduled-a",
+		models: [{ ...modelDef("model-a"), reasoning: true }],
+		tokensPerSecond: 100,
+	});
+	const b = createFauxCore({
+		provider: "scheduled-b",
+		api: "scheduled-b",
+		models: [{ ...modelDef("model-b"), reasoning: true }],
+		tokensPerSecond: 2000,
+	});
+	const requests: { provider: string; model: string; reasoning: unknown }[] = [];
+	const configA = {
+		...cfg(a, "model-a"),
+		models: [{ ...modelDef("model-a"), reasoning: true, api: a.api }],
+		streamSimple: (...args: Parameters<typeof a.streamSimple>) => {
+			requests.push({
+				provider: args[0].provider,
+				model: args[0].id,
+				reasoning: args[2]?.reasoning,
+			});
+			return a.streamSimple(...args);
+		},
+	};
+	const configB = {
+		...cfg(b, "model-b"),
+		models: [{ ...modelDef("model-b"), reasoning: true, api: b.api }],
+		streamSimple: (...args: Parameters<typeof b.streamSimple>) => {
+			requests.push({
+				provider: args[0].provider,
+				model: args[0].id,
+				reasoning: args[2]?.reasoning,
+			});
+			return b.streamSimple(...args);
+		},
+	};
+	runtime.registerProvider("scheduled-a", configA);
+	runtime.registerProvider("scheduled-b", configB);
+	a.setResponses([
+		fauxAssistantMessage(`FIRST ${"word ".repeat(100)}`),
+		fauxAssistantMessage("NORMAL"),
+		fauxAssistantMessage("PIN_A"),
+	]);
+	b.setResponses([fauxAssistantMessage("PIN_B")]);
+	const session = await createSession({
+		cwd: tmpCwd("trpi-model-pinned-"),
+		workspaceId: "ws-model-pinned",
+		model: toWireModel(a.getModel()),
+		thinkingLevel: "off",
+	});
+	try {
+		const running = promptSession(session.sessionId, "first");
+		const deadline = Date.now() + 5000;
+		while (requests.length < 1) {
+			if (Date.now() > deadline) throw new Error("No initial request");
+			await new Promise((r) => setTimeout(r, 10));
+		}
+		await followUpSession(session.sessionId, "ordinary already queued");
+		await scheduleFollowUpSession(session.sessionId, "scheduled B", undefined, {
+			model: { provider: "scheduled-b", id: "model-b" },
+			thinkingLevel: "high",
+		});
+		await scheduleFollowUpSession(session.sessionId, "scheduled A", undefined, {
+			model: { provider: "scheduled-a", id: "model-a" },
+			thinkingLevel: "low",
+		});
+		expect(requests).toEqual([{ provider: "scheduled-a", model: "model-a", reasoning: undefined }]);
+		await running;
+		expect(requests).toEqual([
+			{ provider: "scheduled-a", model: "model-a", reasoning: undefined },
+			{ provider: "scheduled-a", model: "model-a", reasoning: undefined },
+			{ provider: "scheduled-b", model: "model-b", reasoning: "high" },
+			{ provider: "scheduled-a", model: "model-a", reasoning: "low" },
+		]);
+		expect(seen(session.sessionId)).toContain("PIN_B");
+		expect(seen(session.sessionId)).toContain("PIN_A");
+		b.appendResponses([fauxAssistantMessage("PIN_B_IDLE")]);
+		await scheduleFollowUpSession(session.sessionId, "idle scheduled B", undefined, {
+			model: { provider: "scheduled-b", id: "model-b" },
+			thinkingLevel: "low",
+		});
+		expect(requests.at(-1)).toEqual({
+			provider: "scheduled-b",
+			model: "model-b",
+			reasoning: "low",
+		});
+		b.appendResponses([fauxAssistantMessage(`HOLD ${"word ".repeat(1000)}`)]);
+		a.appendResponses([fauxAssistantMessage("RESTORED_A")]);
+		const beforeEdit = requests.length;
+		const secondTurn = promptSession(session.sessionId, "hold while editing queued content");
+		const secondDeadline = Date.now() + 5000;
+		while (requests.length === beforeEdit) {
+			if (Date.now() > secondDeadline) throw new Error("No edit-test request");
+			await new Promise((r) => setTimeout(r, 10));
+		}
+		const pairA = {
+			model: { provider: "scheduled-a", id: "model-a" },
+			thinkingLevel: "low" as const,
+		};
+		const pairB = {
+			model: { provider: "scheduled-b", id: "model-b" },
+			thinkingLevel: "high" as const,
+		};
+		await scheduleFollowUpSession(session.sessionId, "keep me", undefined, pairA);
+		await scheduleFollowUpSession(session.sessionId, "remove me", undefined, pairB);
+		const removed = await removeQueuedSession(session.sessionId, "followUp", 1);
+		expect(removed.removed?.modelSelection).toEqual(pairB);
+		const restored = clearQueueSession(session.sessionId);
+		expect(restored.followUp[0]?.modelSelection).toEqual(pairA);
+		for (const item of restored.followUp)
+			await scheduleFollowUpSession(session.sessionId, item.text, undefined, item.modelSelection);
+		await secondTurn;
+		expect(requests.slice(beforeEdit)).toEqual([
+			{ provider: "scheduled-b", model: "model-b", reasoning: "low" },
+			{ provider: "scheduled-a", model: "model-a", reasoning: "low" },
+		]);
+
+		await expect(
+			scheduleFollowUpSession(session.sessionId, "bad reasoning", undefined, {
+				model: { provider: "fauxa", id: "fauxa" },
+				thinkingLevel: "high",
+			}),
+		).rejects.toThrow("Unsupported reasoning");
+
+		await expect(
+			scheduleFollowUpSession(session.sessionId, "invalid", undefined, {
+				model: { provider: "missing", id: "missing" },
+				thinkingLevel: "high",
+			}),
+		).rejects.toThrow();
+	} finally {
+		await removeSession(session.sessionId);
+	}
+}, 30000);

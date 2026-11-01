@@ -317,6 +317,11 @@ export const WS_METHODS = {
 	sessionFollowUp: "session.followUp",
 	sessionClearQueue: "session.clearQueue",
 	sessionRemoveQueued: "session.removeQueued",
+	scheduledPromptsList: "scheduledPrompts.list",
+	scheduledPromptsCreate: "scheduledPrompts.create",
+	scheduledPromptsUpdate: "scheduledPrompts.update",
+	scheduledPromptsCancel: "scheduledPrompts.cancel",
+	scheduledPromptsSendNow: "scheduledPrompts.sendNow",
 	sessionAbort: "session.abort",
 	sessionDispose: "session.dispose",
 	sessionDelete: "session.delete",
@@ -409,6 +414,7 @@ export const WS_CHANNELS = {
 	sessionDeleted: "session.deleted",
 	sessionResourcesChanged: "session.resourcesChanged",
 	sessionState: "session.state",
+	scheduledPromptsChanged: "scheduledPrompts.changed",
 	providerLogin: "provider.login",
 	providerChanged: "provider.changed",
 	terminalData: "terminal.data",
@@ -573,6 +579,19 @@ export interface ClientErrorReport {
 
 export interface Ack {
 	ok: true;
+}
+
+export interface ScheduledPromptRecord {
+	modelSelection?: import("./piProtocol").PromptModelSelection;
+	id: string;
+	workspaceId: string;
+	sessionId: string;
+	text: string;
+	images?: ImageContent[];
+	dueAt: number;
+	createdAt: number;
+	status: "scheduled" | "delivering" | "failed";
+	error?: string;
 }
 
 export interface ReviewSendResult {
@@ -921,6 +940,30 @@ export interface WsMethodMap {
 	"session.removeQueued": {
 		params: { sessionId: string; kind: QueueLane; index: number };
 		result: RemovedQueuedMessage;
+	};
+	"scheduledPrompts.list": { params: { workspaceId: string }; result: ScheduledPromptRecord[] };
+	"scheduledPrompts.create": {
+		params: ScheduledPromptRecord & { requestId: string };
+		result: ScheduledPromptRecord;
+	};
+	"scheduledPrompts.update": {
+		params: {
+			modelSelection?: import("./piProtocol").PromptModelSelection;
+			id: string;
+			workspaceId: string;
+			dueAt: number;
+			text: string;
+			images?: ImageContent[];
+		};
+		result: ScheduledPromptRecord;
+	};
+	"scheduledPrompts.sendNow": {
+		params: { id: string; workspaceId: string };
+		result: { accepted: boolean };
+	};
+	"scheduledPrompts.cancel": {
+		params: { id: string; workspaceId: string };
+		result: { cancelled: boolean };
 	};
 	"session.abort": {
 		params: { sessionId: string; restoreQueue?: boolean };

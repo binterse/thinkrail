@@ -8,7 +8,12 @@ import {
 	RiSparkling2Line as Sparkles,
 	RiStopFill as StopFill,
 } from "@remixicon/react";
-import type { ComposerGrowthLimit, ThinkingLevel, WireModel } from "@thinkrail/contracts";
+import type {
+	ComposerGrowthLimit,
+	PromptModelSelection,
+	ThinkingLevel,
+	WireModel,
+} from "@thinkrail/contracts";
 import type { MessageKey } from "@thinkrail/locales";
 import { useT } from "@thinkrail/locales/react";
 import { Button, IconButton } from "@thinkrail/ui/button";
@@ -52,6 +57,7 @@ import {
 } from "./ModelEffortPicker";
 import { isModelCommand, parseModelCommand } from "./nativeCommands";
 import { imagePasteDropHandlers, PromptImageChips, usePromptImages } from "./promptImages";
+import { ScheduledPrompts } from "./ScheduledPrompts";
 import type { ChatAttachment } from "./types";
 import type { ModelPreferences } from "./useModelPreferences";
 
@@ -165,6 +171,16 @@ interface ComposerProps {
 	onSlashActive: (active: boolean) => void;
 	onSelectModel: (selection: ModelSelection) => void;
 	onSelectThinking: (level: ThinkingLevel) => void;
+	workspaceId: string;
+	sessionId: string;
+	connectionGeneration: number;
+	onSchedule: (
+		requestId: string,
+		dueAt: number,
+		text: string,
+		images: import("@thinkrail/contracts").ImageContent[],
+		modelSelection: PromptModelSelection,
+	) => Promise<unknown>;
 	onSubmit: (
 		text: string,
 		attachments: ChatAttachment[],
@@ -207,6 +223,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 		onSelectModel,
 		onSelectThinking,
 		onSubmit,
+		workspaceId,
+		sessionId,
+		connectionGeneration,
+		onSchedule,
 		onAbort,
 		onHistoryOpen,
 		onPickTemplate,
@@ -216,6 +236,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 	handleRef,
 ) {
 	const t = useT();
+	const [scheduledListTarget, setScheduledListTarget] = useState<HTMLDivElement | null>(null);
 	const ref = useRef<HTMLTextAreaElement>(null);
 	const pickerRef = useRef<ModelEffortPickerHandle>(null);
 	const [caret, setCaret] = useState(0);
@@ -564,6 +585,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 			/>
 
 			<div className="p-chat-gutter">
+				<div ref={setScheduledListTarget} />
 				<div
 					data-testid="chat-composer-shell"
 					className={cn(
@@ -756,6 +778,25 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 								</Popover>
 							) : null}
 						</div>
+						<ScheduledPrompts
+							models={models}
+							currentModel={currentModel}
+							thinkingLevel={thinkingLevel}
+							modelPreferences={modelPreferences}
+							modelsRefreshing={modelsRefreshing}
+							onRefreshModels={onRefreshModels}
+							listTarget={scheduledListTarget}
+							workspaceId={workspaceId}
+							sessionId={sessionId}
+							connectionGeneration={connectionGeneration}
+							text={value}
+							images={images.map((image) => image.content)}
+							onSchedule={onSchedule}
+							onScheduled={() => {
+								onChange("");
+								attachedImages.reset();
+							}}
+						/>
 					</div>
 				</div>
 			</div>
