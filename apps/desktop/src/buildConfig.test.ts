@@ -47,6 +47,7 @@ test("selects real Bun and preserves the physical runtime resources without reti
 test("generated server runtime threads the opener and desktop proxies explicit readiness", () => {
 	const source = readFileSync(resolve(desktopDir, "preBuild.ts"), "utf8");
 	expect(source).toContain("options.openExternal ? { openExternal: options.openExternal } : {}");
+	expect(source).toContain('host: process.env.THINKRAIL_DESKTOP_HOST ?? "127.0.0.1"');
 	const runtimeContract = readFileSync(resolve(desktopDir, "src/serverRuntime.ts"), "utf8");
 	expect(runtimeContract).toContain("startAttributionClaim(): void");
 	const launcher = readFileSync(resolve(desktopDir, "src/index.ts"), "utf8");
