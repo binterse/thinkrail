@@ -271,6 +271,10 @@ Scheduled prompts wait locally before joining the normal
 follow-up queue; each waiting row can also be sent immediately with **Send now**.
 Each schedule retains its own provider, model and reasoning level; edit the saved row to change them.
 
+For this checkout's Windows build, canonical profile and backups, see
+[`LOCAL-BUILD.md`](LOCAL-BUILD.md). Daily use has one ThinkRail shortcut and uses real project folders;
+disposable test profiles require explicit opt-in.
+
 ## Contributing
 
 Contributions are welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md). This project and community are
