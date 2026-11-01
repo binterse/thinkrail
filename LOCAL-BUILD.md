@@ -86,18 +86,28 @@ history and provider configuration while remapping project and transcript cwd pa
 disposable repos. These are independent test fixtures, not synchronized project copies.
 Do not create a daily-use shortcut for them. Real provider turns still cost tokens.
 
-## Local access
+## Optional private LAN access
 
-The daily-use launcher selects `http://127.0.0.1:60570/`. Test profiles use an ephemeral
-loopback port. This change includes no LAN hosting override, firewall setup or mobile
-access claim. Those experiments are kept separately until verified from another device.
-An old `.local/network.json` is ignored by this launcher. Electrobun startup warnings and
-provider catalog failures remain separate diagnostics; hidden startup does not resolve them.
+An ignored `.local/network.json` can select `{"host":"0.0.0.0","port":60570}`.
+Without it, startup uses loopback and an ephemeral port. The desktop window still uses
+loopback; other devices use `http://<host-LAN-IP>:60570/` on the same private network.
+
+`EnableLanFirewall.ps1` requires Windows administrator approval. It creates the named
+`ThinkRail-Local-LAN-60570` inbound TCP rule for this dev bundle only, scoped to Private
+and LocalSubnet. After verifying it, the script disables broad Windows Query User rules
+for that exact executable. It does not change router settings. The result is recorded in
+`.local/lan-firewall-result.json`. To disable LAN hosting, remove `.local/network.json`
+and restart. An administrator can remove the named firewall rule separately.
+
+Browser UUID creation uses the existing randomUuid helper so LAN HTTP does not depend
+on secure-context-only crypto.randomUUID. Electrobun startup warnings and provider
+catalog failures are separate diagnostics; hidden startup does not resolve those warnings.
 
 ## Verification limits
 
 The web unit suite and per-prompt provider/model/reasoning regression use disposable
-fixtures and scripted providers. The complete no-agent browser suite
+fixtures and scripted providers. LAN probes verified HTTP, WebSocket, mobile layout and
+schedule creation without secure-context randomUUID. The complete no-agent browser suite
 was attempted but does not pass on this Windows setup: its fixtures include a missing
 Unix `mv` executable. Native process cancellation tests can also exceed their timeouts.
 These are not claims of a fully green upstream E2E suite or a validated installer.

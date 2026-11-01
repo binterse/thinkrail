@@ -132,3 +132,6 @@ not this module; the theme-aware highlighter remains app-local.
   default tab names read; the layout-resource identity input is a local structural type); `shiki`/`@shikijs/*` (the per-file shiki modules only — never reachable
   through the barrel).
 - **Forbidden:** every app-internal module — this is a leaf.
+
+All browser UUID generation (hydration, chat state, image attachments and scheduled
+request ids) uses randomUuid so the same UI works over a plain-HTTP LAN origin.
