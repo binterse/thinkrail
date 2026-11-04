@@ -2404,6 +2404,75 @@ export async function scheduleFollowUpSession(
 	await followUpEntry(mustGetEntry(sessionId), text, images, false, modelSelection);
 }
 
+export async function acceptScheduledFollowUpSession(
+	sessionId: string,
+	text: string,
+	images?: ImageContent[],
+	modelSelection?: PromptModelSelection,
+	isCurrent: () => boolean = () => true,
+): Promise<boolean> {
+	if (modelSelection) validatePromptModelSelection(sessionId, modelSelection);
+	const entry = mustGetEntry(sessionId);
+	admitRun(entry);
+	if (entry.session.isStreaming) {
+		if (!isCurrent()) return false;
+		if (modelSelection && entry.priorFollowUpMode === undefined) {
+			entry.priorFollowUpMode = entry.session.agent.followUpMode;
+			entry.session.agent.followUpMode = "one-at-a-time";
+		}
+		await queueSessionMessage(
+			entry,
+			"followUp",
+			text,
+			images,
+			() => entry.session.followUp(text, images),
+			modelSelection,
+		);
+		return true;
+	}
+	const release = admitPreflight(entry);
+	try {
+		if (modelSelection) await applyPromptModelSelection(entry, modelSelection);
+		if (!isCurrent()) return false;
+		await new Promise<void>((resolve, reject) => {
+			let started = false;
+			let subscribed = true;
+			const unsubscribe = entry.session.subscribe((event) => {
+				if (event.type !== "agent_start" || started) return;
+				started = true;
+				subscribed = false;
+				unsubscribe();
+				resolve();
+			});
+			const cleanup = () => {
+				if (!subscribed) return;
+				subscribed = false;
+				unsubscribe();
+			};
+			try {
+				void entry.session.prompt(text, images ? { images } : undefined).then(
+					() => {
+						if (!started) {
+							cleanup();
+							reject(new Error("Scheduled prompt was not accepted by the session."));
+						}
+					},
+					(error: unknown) => {
+						cleanup();
+						if (!started) reject(error);
+					},
+				);
+			} catch (error) {
+				cleanup();
+				reject(error);
+			}
+		});
+		return true;
+	} finally {
+		release();
+	}
+}
+
 async function followUpEntry(
 	entry: Entry,
 	text: string,

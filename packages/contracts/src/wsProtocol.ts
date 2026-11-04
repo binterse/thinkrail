@@ -590,6 +590,8 @@ export interface ScheduledPromptRecord {
 	images?: ImageContent[];
 	dueAt: number;
 	createdAt: number;
+	/** Durable order of the latest save; optional when reading records from before this field existed. */
+	savedOrder?: number;
 	status: "scheduled" | "delivering" | "failed";
 	error?: string;
 }

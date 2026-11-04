@@ -1187,3 +1187,5 @@ shell panels need `domain` + `wsProtocol`; the `pi` types + `PiEvent` are the wi
 
 ScheduledPromptRecord and QueuedMessageContent may carry PromptModelSelection: a stable
 provider/model reference plus ThinkingLevel, retained by scheduled create/update/list/events.
+Scheduled records also carry an optional durable `savedOrder`; hosts assign it on create and update,
+and order pre-existing records by creation time during migration.

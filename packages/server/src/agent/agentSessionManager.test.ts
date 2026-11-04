@@ -37,6 +37,7 @@ import { defaultSessionDirFor, writeFixtureSession } from "../history/testFixtur
 import { setTrashImplementationForTests } from "../trash";
 import {
 	abortSession,
+	acceptScheduledFollowUpSession,
 	acknowledgeCompletion,
 	buildSessionSettings,
 	clampThinkingForModel,
@@ -4275,11 +4276,11 @@ test("scheduled follow-ups keep per-prompt provider/model/reasoning behind exist
 			await new Promise((r) => setTimeout(r, 10));
 		}
 		await followUpSession(session.sessionId, "ordinary already queued");
-		await scheduleFollowUpSession(session.sessionId, "scheduled B", undefined, {
+		await acceptScheduledFollowUpSession(session.sessionId, "scheduled B", undefined, {
 			model: { provider: "scheduled-b", id: "model-b" },
 			thinkingLevel: "high",
 		});
-		await scheduleFollowUpSession(session.sessionId, "scheduled A", undefined, {
+		await acceptScheduledFollowUpSession(session.sessionId, "scheduled A", undefined, {
 			model: { provider: "scheduled-a", id: "model-a" },
 			thinkingLevel: "low",
 		});
@@ -4349,5 +4350,65 @@ test("scheduled follow-ups keep per-prompt provider/model/reasoning behind exist
 		).rejects.toThrow();
 	} finally {
 		await removeSession(session.sessionId);
+	}
+}, 30000);
+
+test("scheduled handoff is accepted at agent start while another chat can start", async () => {
+	const core = createFauxCore({
+		provider: "scheduled-handoff",
+		api: "scheduled-handoff",
+		models: [modelDef("scheduled-handoff")],
+		tokensPerSecond: 100,
+	});
+	runtime.registerProvider("scheduled-handoff", cfg(core, "scheduled-handoff"));
+	let release!: () => void;
+	const gate = new Promise<void>((resolve) => (release = resolve));
+	let requestStarted!: () => void;
+	const firstRequest = new Promise<void>((resolve) => (requestStarted = resolve));
+	core.setResponses([
+		async () => {
+			requestStarted();
+			await gate;
+			return fauxAssistantMessage("A_DONE");
+		},
+		fauxAssistantMessage("B_DONE"),
+	]);
+	let sessionA: Awaited<ReturnType<typeof createSession>> | undefined;
+	let sessionB: Awaited<ReturnType<typeof createSession>> | undefined;
+	try {
+		sessionA = await createSession({
+			cwd: tmpCwd("trpi-scheduled-handoff-a-"),
+			workspaceId: "ws-scheduled-handoff-a",
+			model: toWireModel(core.getModel()),
+		});
+		sessionB = await createSession({
+			cwd: tmpCwd("trpi-scheduled-handoff-b-"),
+			workspaceId: "ws-scheduled-handoff-b",
+			model: toWireModel(core.getModel()),
+		});
+
+		const acceptedA = acceptScheduledFollowUpSession(sessionA.sessionId, "A");
+		await firstRequest;
+		await acceptedA;
+		expect(getSessionState(sessionA.sessionId).execution).toBe("running");
+
+		await acceptScheduledFollowUpSession(sessionB.sessionId, "B");
+		expect(getSessionState(sessionB.sessionId).execution).toBe("running");
+		expect(getSessionState(sessionA.sessionId).execution).toBe("running");
+
+		release();
+		const deadline = Date.now() + 5000;
+		while (
+			getSessionState(sessionA.sessionId).execution === "running" ||
+			getSessionState(sessionB.sessionId).execution === "running"
+		) {
+			if (Date.now() > deadline) throw new Error("The held response did not finish");
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		}
+	} finally {
+		release();
+		if (sessionA) await removeSession(sessionA.sessionId);
+		if (sessionB) await removeSession(sessionB.sessionId);
+		runtime.unregisterProvider("scheduled-handoff");
 	}
 }, 30000);

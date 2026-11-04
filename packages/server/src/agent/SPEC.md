@@ -1610,3 +1610,8 @@ setThinkingLevel immediately before the public prepareRequest hook. Queue edits 
 metadata; explicit clears discard pending selection. Pinned follow-ups drain one at a time using
 the public Agent queue-mode property, restoring its prior mode when no pinned item remains.
 Selection is session-local, not a change to global defaults.
+
+Scheduled delivery has a separate acceptance call: an already streaming session accepts when Pi has
+queued the follow-up; an idle session accepts at `agent_start`, not when its model run finishes.
+This lets the scheduler continue servicing other chats while each chat's existing follow-up lane
+remains authoritative.
