@@ -9,8 +9,9 @@ tags: [public-surface-checked]
 
 ## Responsibility
 
-Detect which editors/IDEs the host actually has installed, launch one detached at a worktree, and reveal a
-worktree in the host's file manager — the workspace row's "Open in" menu.
+Detect which editors/IDEs the host actually has installed, launch one detached at a worktree or contained
+file, open an explicit path with the host's default application, and reveal an explicit path in the host's
+file manager.
 
 ## Boundary
 
@@ -25,7 +26,13 @@ worktree in the host's file manager — the workspace row's "Open in" menu.
   matching `apps/cli`'s `openBrowser`); throws when the id is unknown or no longer installed. `revealInFileManager
   (worktreePath)` opens the OS's own file manager there: `open` (macOS), `explorer` (Windows), `xdg-open`
   (Linux desktop default) — fire-and-forget, so `explorer`'s well-known nonzero-on-success exit is never
-  inspected.
+  inspected. `openFileInVsCode(path)` reuses VS Code detection and reports unavailable vs launch failure
+  with distinct wire codes. `openWithDefaultApp(path)` delegates to the OS association by argv (Windows
+  uses Explorer, which applies the registered file association), and `revealPath(path)` selects the explicit
+  target (`open -R`, `explorer /select, <path>`, or the containing directory with `xdg-open`); on Windows,
+  the switch and path are separate argv entries so paths with spaces remain intact, and these Explorer
+  actions explicitly show their GUI process because a hidden Explorer spawn opens no visible window. The
+  existing worktree-only `revealInFileManager` command stays unchanged.
 - **Vim is `kind: "terminal"`, not launched here.** It has no GUI window of its own — spawning it detached
   with no attached TTY would just print "Warning: Output is not to a terminal" and exit. The **client**
   handles that case itself: open/focus the clicked workspace's embedded terminal and run `vim .` there
@@ -43,9 +50,9 @@ worktree in the host's file manager — the workspace row's "Open in" menu.
   `platform` (default `process.platform`), the same testable-parameter pattern `dialog`'s `pickersFor`
   uses, so its darwin/win32/linux branches are each asserted directly rather than only on whichever OS
   runs the test.
-- **Public surface (barrel):** `listAvailableEditors`, `openEditor`, `revealInFileManager`, `WhichFn`,
+- **Public surface (barrel):** `listAvailableEditors`, `openEditor`, `openFileInVsCode`, `revealInFileManager`, `openWithDefaultApp`, `revealPath`, `WhichFn`,
   `SpawnFn`.
-- **Allowed deps:** `Bun.which`, `@thinkrail/shared/spawn` (`spawnDetached`), `process.env`/`process.platform`,
+- **Allowed deps:** `Bun.which`, `@thinkrail/shared/spawn` (`spawnDetached`) and `@thinkrail/shared/codedError`, `process.env`/`process.platform`,
   `contracts` (the `EditorInfo` wire type).
 - **Forbidden:** `host`; sibling features (`workspaces` resolves `worktreePath` before calling in — this
   module never looks up a workspace itself).

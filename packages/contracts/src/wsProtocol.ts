@@ -135,7 +135,8 @@ export type TemplateReadLocation =
 	| { projectId: string; workspaceId?: never }
 	| { workspaceId?: never; projectId?: never };
 
-export const PROTOCOL_VERSION = 102;
+export const PROTOCOL_VERSION = 103;
+export const FILE_ACTIONS_PROTOCOL_VERSION = 103;
 export const FONTS_PROTOCOL_VERSION = 102;
 export const CUSTOM_ENDPOINTS_PROTOCOL_VERSION = 101;
 export const PI_PACKAGES_PROTOCOL_VERSION = 100;
@@ -278,6 +279,8 @@ export const WS_METHODS = {
 	prReopen: "pr.reopen",
 	fsReadDir: "fs.readDir",
 	fsReadFile: "fs.readFile",
+	fsPathInfo: "fs.pathInfo",
+	fsOpen: "fs.open",
 	specGraph: "spec.graph",
 	todoList: "todo.list",
 	todoAdd: "todo.add",
@@ -863,6 +866,14 @@ export interface WsMethodMap {
 		params: { workspaceId: string; path: string };
 		result: { content: string; meta: ResourceMeta };
 	};
+	"fs.pathInfo": {
+		params: { workspaceId: string; path: string };
+		result: { absolutePath: string; kind: "file" | "dir" };
+	};
+	"fs.open": {
+		params: { workspaceId: string; path: string; action: "vscode" | "default" | "reveal" };
+		result: Ack;
+	};
 	"spec.graph": { params: { workspaceId: string }; result: SpecGraphSnapshot };
 	"todo.list": {
 		params: { workspaceId: string; sessionId: string; opened?: "page" | "rail" };
@@ -1348,7 +1359,9 @@ export type WsErrorCode =
 	| "PACKAGE_UPDATE_FAILED"
 	| "PACKAGE_SETTINGS_WRITE_FAILED"
 	| "REQUEST_REPLAY_OVERFLOW"
-	| "INSTALLED_FONTS_UNAVAILABLE";
+	| "INSTALLED_FONTS_UNAVAILABLE"
+	| "FILE_ACTION_UNAVAILABLE"
+	| "FILE_ACTION_FAILED";
 
 export interface WsResponse {
 	id: string;

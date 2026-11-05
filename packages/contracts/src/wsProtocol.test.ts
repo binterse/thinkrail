@@ -23,6 +23,7 @@ import {
 	DEFAULT_MODEL_PROTOCOL_VERSION,
 	EXTENSION_CATALOG_PROTOCOL_VERSION,
 	FEEDBACK_SURVEY_PROTOCOL_VERSION,
+	FILE_ACTIONS_PROTOCOL_VERSION,
 	FONTS_PROTOCOL_VERSION,
 	HOST_ENVIRONMENT_PROTOCOL_VERSION,
 	HOST_UPDATE_RUN_PROTOCOL_VERSION,
@@ -242,11 +243,18 @@ test("tool responses replace the ask-only answer method at v93", () => {
 
 test("user-selectable fonts are pinned to v102", () => {
 	expect(FONTS_PROTOCOL_VERSION).toBe(102);
-	expect(PROTOCOL_VERSION).toBe(102);
+	expect(PROTOCOL_VERSION).toBeGreaterThanOrEqual(FONTS_PROTOCOL_VERSION);
 	expect(WS_METHODS.fontsList).toBe("fonts.list");
 	expect(WS_METHODS.fontsInstalled).toBe("fonts.installed");
 	expect(WS_METHODS.fontsReveal).toBe("fonts.reveal");
 	expect(WS_CHANNELS.fontsChanged).toBe("fonts.changed");
+});
+
+test("Files host actions are pinned to v103", () => {
+	expect(FILE_ACTIONS_PROTOCOL_VERSION).toBe(103);
+	expect(PROTOCOL_VERSION).toBe(103);
+	expect(WS_METHODS.fsPathInfo).toBe("fs.pathInfo");
+	expect(WS_METHODS.fsOpen).toBe("fs.open");
 });
 
 test("user theme files are pinned to v92", () => {

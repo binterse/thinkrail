@@ -39,9 +39,11 @@ the palette ranks with — kept here so host-side search can rank with the same 
   holds — the ring is 20 deep and dies with the process), and **`UNSUPPORTED_CHANGE`** (the selected
   change is a symlink or mode-only mutation that this byte-oriented write path deliberately refuses), plus
   the four `feedback.survey.submit` refusals `SURVEY_INVALID`, `SURVEY_UNAVAILABLE`, `SURVEY_CHANGED` and
-  `SURVEY_NOT_SENT`, and `fonts.installed`'s `INSTALLED_FONTS_UNAVAILABLE`: the host's OS font service could
+  `SURVEY_NOT_SENT`, `fonts.installed`'s `INSTALLED_FONTS_UNAVAILABLE` (the host's OS font service could
   not be read, a failure analytics tells apart from a lost connection while the font picker offers Retry for
-  either), so a client can react to one specific failure
+  either), and Files actions' `WORKTREE_PATH_UNAVAILABLE` (the target is missing or no longer contained),
+  `FILE_ACTION_UNAVAILABLE` (VS Code is not installed), and `FILE_ACTION_FAILED` (the host could not launch
+  the requested action), so clients can react to one specific failure
   instead of pattern-matching an error message. A failure earns a code only when a client behaves differently
   for it or Error Tracking must tell it apart (it never sees `message`): **`REQUEST_REPLAY_OVERFLOW`** is the
   latter — the host's replay namespace for this page is full ([[submodule-server-host]]), and the page treats
@@ -637,7 +639,9 @@ the palette ranks with — kept here so host-side search can rank with the same 
   includeDiffStats? }`**, where omitted/true preserves the existing full rows with computed aggregates and
   `false` returns the same authoritative membership/order without the synchronous per-workspace diff-stat
   fan-out used nowhere by navigation restoration / `fs.*` (**`fs.readFile`** answers
-  `{ content, meta: ResourceMeta }`) / `git.*` / **`spec.graph`**
+  `{ content, meta: ResourceMeta }`; `fs.pathInfo` returns a contained host absolute path and file/directory
+  kind, and `fs.open` dispatches only `vscode`, `default`, or `reveal` host actions from
+  `FILE_ACTIONS_PROTOCOL_VERSION`) / `git.*` / **`spec.graph`**
   (the Specs-viewer whole-graph read, per workspace) / **`todo.*`** — **`list`**/**`add`**/**`update`**/
   **`remove`**, the chat's per-session TODO plan (keyed by `workspaceId` + `sessionId`; `add` tags the
   item `origin:"user"`), plus the review ops **`review`** (approve: record `reviewed` + the sha
