@@ -108,7 +108,14 @@ import {
 import { findBranchReviewOutcome, providerFromRemoteUrl } from "../branch-review";
 import { forgetWorkspaceChanges, revertChange, undoChange } from "../changes";
 import { selectDirectory } from "../dialog";
-import { listAvailableEditors, openEditor, revealInFileManager } from "../editors";
+import {
+	listAvailableEditors,
+	openEditor,
+	openFileInVsCode,
+	openWithDefaultApp,
+	revealInFileManager,
+	revealPath,
+} from "../editors";
 import { hostEnvironmentStatus, updateHostEnvironment } from "../environment";
 import { listExtensionCatalog } from "../extensions";
 import {
@@ -124,7 +131,7 @@ import {
 	surveyResponse,
 } from "../feedback";
 import { fontsDir, listInstalledFonts, readUserFonts } from "../fonts";
-import { readDir, readFile } from "../fs";
+import { pathInfo, readDir, readFile } from "../fs";
 import {
 	commitsAheadOf,
 	countPushDivergence,
@@ -802,6 +809,14 @@ const handlers: WsHandlers = {
 	"fs.readFile": (p) => {
 		void ensureWatch(p.workspaceId);
 		return readFile(p.workspaceId, p.path);
+	},
+	"fs.pathInfo": (p) => pathInfo(p.workspaceId, p.path),
+	"fs.open": (p) => {
+		const { absolutePath } = pathInfo(p.workspaceId, p.path);
+		if (p.action === "vscode") openFileInVsCode(absolutePath);
+		else if (p.action === "default") openWithDefaultApp(absolutePath);
+		else revealPath(absolutePath);
+		return { ok: true } as const;
 	},
 	"spec.graph": (p) => {
 		void ensureWatch(p.workspaceId);

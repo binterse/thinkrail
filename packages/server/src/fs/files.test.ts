@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
-import { readDir, workspaceRelativePath } from "./files";
+import { pathInfo, readDir, workspaceRelativePath } from "./files";
 
 let dataDir: string;
 let root: string;
@@ -30,6 +30,51 @@ test("readDir reports worktree-relative paths with forward slashes on every plat
 	expect(readDir("w1", ".").map((node) => node.path)).toEqual(["src"]);
 	expect(readDir("w1", "src").map((node) => node.path)).toEqual(["src/auth"]);
 	expect(readDir("w1", "src/auth").map((node) => node.path)).toEqual(["src/auth/login.ts"]);
+});
+
+test("pathInfo returns the absolute host path and object kind for contained files and directories", () => {
+	expect(pathInfo("w1", "src/auth/login.ts")).toEqual({
+		absolutePath: join(root, "src", "auth", "login.ts"),
+		kind: "file",
+	});
+	expect(pathInfo("w1", "src/auth")).toEqual({
+		absolutePath: join(root, "src", "auth"),
+		kind: "dir",
+	});
+});
+
+test("pathInfo refuses missing paths, metadata and paths outside the worktree", () => {
+	mkdirSync(join(root, ".git"));
+	writeFileSync(join(root, ".git", "config"), "metadata\n");
+	const paths = ["missing.txt", ".git/config", "../outside.txt"];
+	if (process.platform === "win32") paths.push(".GIT/config");
+	for (const path of paths) {
+		let error: unknown;
+		try {
+			pathInfo("w1", path);
+		} catch (caught) {
+			error = caught;
+		}
+		expect(error).toMatchObject({ code: "WORKTREE_PATH_UNAVAILABLE" });
+	}
+});
+
+test("pathInfo refuses a directory junction that resolves outside the worktree", () => {
+	const outside = join(dataDir, "outside");
+	mkdirSync(outside);
+	writeFileSync(join(outside, "payload.txt"), "outside\n");
+	try {
+		symlinkSync(outside, join(root, "outside-link"), "junction");
+	} catch {
+		return;
+	}
+	let error: unknown;
+	try {
+		pathInfo("w1", "outside-link/payload.txt");
+	} catch (caught) {
+		error = caught;
+	}
+	expect(error).toMatchObject({ code: "WORKTREE_PATH_UNAVAILABLE" });
 });
 
 test("workspaceRelativePath names a contained path worktree-relative with / separators", () => {

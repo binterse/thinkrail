@@ -1,4 +1,6 @@
+import { dirname } from "node:path";
 import type { EditorInfo } from "@thinkrail/contracts";
+import { CodedError } from "@thinkrail/shared/codedError";
 import { spawnDetached } from "@thinkrail/shared/spawn";
 
 interface GuiCandidate {
@@ -32,10 +34,10 @@ export type WhichFn = (bin: string) => string | null;
 export const defaultWhich: WhichFn = (bin) =>
 	Bun.which(bin, { PATH: process.env.PATH ?? "" }) ?? null;
 
-export type SpawnFn = (cmd: string[]) => void;
+export type SpawnFn = (cmd: string[], options?: { windowsHide?: boolean }) => void;
 
-export const defaultSpawn: SpawnFn = (cmd) => {
-	if (!spawnDetached(cmd)) throw new Error("Failed to launch the requested application");
+export const defaultSpawn: SpawnFn = (cmd, options) => {
+	if (!spawnDetached(cmd, options)) throw new Error("Failed to launch the requested application");
 };
 
 export function listAvailableEditors(which: WhichFn = defaultWhich): EditorInfo[] {
@@ -73,6 +75,63 @@ export function openEditor(
 	const bin = resolveGuiBin(editorId, which);
 	if (!bin) throw new Error(`"${editorId}" isn't installed on this host`);
 	spawn([bin, worktreePath]);
+}
+
+export function openFileInVsCode(
+	path: string,
+	which: WhichFn = defaultWhich,
+	spawn: SpawnFn = defaultSpawn,
+): void {
+	const bin = resolveGuiBin("vscode", which);
+	if (!bin)
+		throw new CodedError(
+			"FILE_ACTION_UNAVAILABLE",
+			"Visual Studio Code is not installed on this host.",
+		);
+	try {
+		spawn([bin, path]);
+	} catch {
+		throw new CodedError(
+			"FILE_ACTION_FAILED",
+			"The host could not open the selected path in VS Code.",
+		);
+	}
+}
+
+export function openWithDefaultApp(
+	path: string,
+	spawn: SpawnFn = defaultSpawn,
+	platform: NodeJS.Platform = process.platform,
+): void {
+	const cmd =
+		platform === "darwin"
+			? ["open", path]
+			: platform === "win32"
+				? ["explorer", path]
+				: ["xdg-open", path];
+	try {
+		spawn(cmd, platform === "win32" ? { windowsHide: false } : undefined);
+	} catch {
+		throw new CodedError("FILE_ACTION_FAILED", "The host could not open the selected path.");
+	}
+}
+
+export function revealPath(
+	path: string,
+	spawn: SpawnFn = defaultSpawn,
+	platform: NodeJS.Platform = process.platform,
+): void {
+	const cmd =
+		platform === "darwin"
+			? ["open", "-R", path]
+			: platform === "win32"
+				? ["explorer", "/select,", path]
+				: ["xdg-open", dirname(path)];
+	try {
+		spawn(cmd, platform === "win32" ? { windowsHide: false } : undefined);
+	} catch {
+		throw new CodedError("FILE_ACTION_FAILED", "The host could not reveal the selected path.");
+	}
 }
 
 export function revealInFileManager(

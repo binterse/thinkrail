@@ -43,9 +43,10 @@ create the tools it needs based on how you actually work.
   decision, and lets you mark it ready, hand failing checks or a diverged branch to the agent, merge it
   with the repository's last-used method, reopen it, or delete the remote branch.
 - **A real IDE around the agent.** A splittable workbench of Monaco editor tabs, a Files tree with live git
-  change marks and a Changed view, terminals, and documents — all scoped to the active workspace. Leave
-  anchored review comments on files and diffs and send them to a chat as structured context, or open the
-  worktree in your installed IDE.
+  change marks and a Changed view, terminals, and documents — all scoped to the active workspace. In the
+  Files tree, right-click a file or folder to open it in VS Code or its default app, reveal it in the host
+  file manager, or copy its absolute path. Leave anchored review comments on files and diffs and send them
+  to a chat as structured context, or open the worktree in your installed IDE.
 - **Chats that stream like the engine thinks.** Several concurrent `pi` sessions per workspace, each with
   its own model and live token and cost readout. Steer a running turn or queue a follow-up, delegate to
   subagents, and work a shared plan the agent updates and you edit — each completed step can be committed

@@ -1,6 +1,7 @@
-import { readdirSync, readFileSync, realpathSync } from "node:fs";
+import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { FileNode, ResourceMeta } from "@thinkrail/contracts";
+import { CodedError } from "@thinkrail/shared/codedError";
 import { loadWorkspaces } from "../persistence";
 import { decodeText, resourceMeta } from "./content";
 
@@ -20,7 +21,9 @@ export function workspaceRelativePath(root: string, path: string): string | null
 }
 
 function isGitMetadataPath(root: string, candidate: string): boolean {
-	return relative(root, candidate).split(sep).includes(".git");
+	return relative(root, candidate)
+		.split(sep)
+		.some((segment) => segment.toLowerCase() === ".git");
 }
 
 function assertExistingAncestorContained(root: string, abs: string): void {
@@ -84,6 +87,23 @@ export function readFile(
 	const bytes = readFileSync(abs);
 	const meta = resourceMeta(bytes, path);
 	return { content: meta.text ? decodeText(bytes) : "", meta };
+}
+
+export function pathInfo(
+	workspaceId: string,
+	path: string,
+): { absolutePath: string; kind: "file" | "dir" } {
+	try {
+		const { abs } = resolveInWorktree(workspaceId, path, true);
+		const stat = statSync(abs);
+		if (!stat.isFile() && !stat.isDirectory()) throw new Error("Unsupported filesystem object");
+		return { absolutePath: abs, kind: stat.isDirectory() ? "dir" : "file" };
+	} catch {
+		throw new CodedError(
+			"WORKTREE_PATH_UNAVAILABLE",
+			"The selected workspace path is unavailable or outside the worktree.",
+		);
+	}
 }
 
 export function resolveWorktreeFile(

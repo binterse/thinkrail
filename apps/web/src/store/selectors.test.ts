@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+	FILE_ACTIONS_PROTOCOL_VERSION,
 	MODEL_PICKER_PROTOCOL_VERSION,
 	type Project,
 	type SessionState,
@@ -42,6 +43,7 @@ import {
 	selectProjectNeedsAttention,
 	selectReadyCompletionAck,
 	selectSkillsStale,
+	selectSupportsFileActions,
 	selectSupportsModelPicker,
 	selectUnnamedChatFirstPrompts,
 	selectWorkspaceIsRunning,
@@ -74,6 +76,14 @@ test("chat rename capability follows the host protocol snapshot", () => {
 	expect(selectCanRenameChat({ protocolVersion: 66 })).toBe(true);
 	expect(selectCanRenameChat({ protocolVersion: 65 })).toBe(false);
 	expect(selectCanRenameChat({ protocolVersion: null })).toBe(false);
+});
+
+test("Files context actions require the file-actions host protocol", () => {
+	expect(selectSupportsFileActions({ protocolVersion: null })).toBe(false);
+	expect(selectSupportsFileActions({ protocolVersion: FILE_ACTIONS_PROTOCOL_VERSION - 1 })).toBe(
+		false,
+	);
+	expect(selectSupportsFileActions({ protocolVersion: FILE_ACTIONS_PROTOCOL_VERSION })).toBe(true);
 });
 
 test("normalized rail flags keep attention binary and working orthogonal", () => {

@@ -4,6 +4,7 @@ import {
 	CHAT_RESOURCES_PROTOCOL_VERSION,
 	canMarkCompletionUnread,
 	DEFAULT_WORKSPACE_NAME,
+	FILE_ACTIONS_PROTOCOL_VERSION,
 	firstPromptOfTexts,
 	type GitDiffScope,
 	isLiveResource,
@@ -120,6 +121,10 @@ interface ProtocolState {
 
 export function selectCanRenameChat(state: ProtocolState): boolean {
 	return state.protocolVersion !== null && state.protocolVersion >= SESSION_RENAME_PROTOCOL_VERSION;
+}
+
+export function selectSupportsFileActions(state: ProtocolState): boolean {
+	return state.protocolVersion !== null && state.protocolVersion >= FILE_ACTIONS_PROTOCOL_VERSION;
 }
 
 export function selectSupportsProjectTrust(state: ProtocolState): boolean {
