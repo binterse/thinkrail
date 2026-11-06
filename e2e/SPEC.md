@@ -260,8 +260,10 @@ and persistence. The reviewed-argv assertion rejects any presentation-text quota
 ignored quota fields prove account/plan/used/top-up/refill/diagnostics never cross the wire or render.
 
 The Central specs share one fixture module for panel navigation, lifecycle-state waits, the argv log, and
-the out-of-band host mutations — installing/uninstalling the fake by moving it in and out of the lane's PATH
-directory, and running it directly as a user's own shell would. A host-side invocation deliberately inherits
+the out-of-band host mutations — installing/uninstalling the fake by renaming it in and out of the lane's
+PATH directory, and running it directly as a user's own shell would. Windows exposes the fake as a `.cmd`
+shim that invokes the same script through Git Bash, matching the `.exe`/`.cmd` lookup ThinkRail performs
+without relying on a Unix-only extensionless command. A host-side invocation deliberately inherits
 none of the host's PATH, so a spec can never reach a real `central`. Because that same log records both
 sides, a spec that injects a host invocation asserts *counts* rather than mere presence — that is what
 distinguishes "the app reacted to an external change" from "the app re-ran the action".
@@ -405,12 +407,13 @@ picker/editor/provider control files, host/restart/binary/desktop ports, and Cen
 transform cache is lane-local because Playwright's shared cache assumes a single runner process; sharing it
 lets a cold shard consume another shard's partially written transform. Every host (source, binary, desktop,
 and the restart spec's own) receives `SHELL` pointing at the lane's fixture `login-shell` next to the
-Central/editor stubs: `resolveShellEnv()` always probes the login shell at boot and merges its PATH in, so the
+Central/editor/Git stubs: `resolveShellEnv()` always probes the login shell at boot and merges its PATH in, so the
 fixture answers the probe (recognized by shared's `LOGIN_ENV_MARKER`) with that marker and the same hermetic
 PATH the host was given, and otherwise execs the runner's real shell, keeping terminal specs on a genuine
 shell. Without it the probe would merge developer-machine directories into the hermetic PATH (and import the
 developer's login environment) and a spec could reach a real `central`, `pi`, or editor. (The `.bun/bin` directory name is historical: it once marked the PATH as complete to a short-circuit
-that no longer exists.) Folder selection comes from one picker control file across the source,
+that no longer exists.) On Windows, the lane's `git.cmd` delegates to the resolved `git.exe` without adding
+its parent directory to the host PATH. Folder selection comes from one picker control file across the source,
 binary, and desktop hosts: plain content returns a path and an `error:<message>` directive forces a
 platform-independent failure. The source host also receives empty `DISPLAY` and `WAYLAND_DISPLAY`, so a
 broken control cannot reach a developer's Linux display; native Linux preflight stays unit-covered. Port

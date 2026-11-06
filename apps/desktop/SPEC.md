@@ -588,3 +588,9 @@ release checks described in [[module-ci-release]].
 Shared/remote backend profiles, profile selection, multi-window/deep-link routing, CEF, and removing the
 `user32` style-bit shim once blackboardsh/electrobun#558 ships. The update feed publication described above
 remains release-owned.
+
+### Local development port
+
+The embedded desktop host binds to loopback. THINKRAIL_DESKTOP_PORT optionally selects
+an exact local port; without it, the desktop uses an ephemeral port. The daily-use local
+launcher selects port 60570. This build does not expose a LAN hosting override.
