@@ -131,8 +131,16 @@ re-opened transcripts provider-valid.
     pass is what pi's own `findInitialModel` would pick. The same-id pass covers a provider whose own
     default the account filter removed: Sign in with ChatGPT serves `openai` models from the
     `openai-codex` set, so it lands on the Codex default instead of catalog order.
+  - `modelsFile` — the one owner of pi's shared `getAgentDir()/models.json` IO for the settings adapters
+    below: BOM-preserving JSONC parse with `jsonc-parser` (comments and unrelated configuration survive),
+    refusing invalid JSON or a read-only file rather than patching it, a temp file written beside the
+    resolved target with the original's mode (`0o600` for a new file) and renamed into place — following a
+    symlinked `models.json` to its target, and creating a dangling link's target rather than replacing the
+    link — one in-process write chain both adapters queue on (so their read-modify-writes never
+    interleave), and the `provider.changed` publisher seam (`setModelsFilePublisher`). Error messages are
+    generic and never carry file contents.
   - `modelContext` — a narrow settings adapter for the `contextWindow` override in pi's shared
-    `getAgentDir()/models.json`, not a second model registry. It lists the OpenAI Responses / Codex
+    `models.json`, not a second model registry. It lists the OpenAI Responses / Codex
     Responses models from `settledAvailableModels` whose effective budget still equals the contracts'
     272K editing minimum (the cap this setting exists to lift), plus any model that already carries an
     override so it can always be reverted; each entry pairs pi's effective `contextWindow` with the
@@ -140,18 +148,66 @@ re-opened transcripts provider-valid.
     from a model-id list, so catalog defaults above 1M stay untouched by a bulk save. A save validates
     the contracts' 272K–1M range first, patches `providers.<p>.modelOverrides.<id>.contextWindow` for the
     target — or, for `available`, every eligible pair the contracts' `isSharedModelContextTarget` admits, so
-    a shared save never rewrites an override outside the range that only a targeted save can touch — with
-    `jsonc-parser` so comments, BOM and unrelated
-    configuration survive, prunes override objects it empties (never `providers`), refuses invalid JSON
-    or a read-only file rather than patching it, then writes a temp file beside the resolved target with
-    the original's mode (`0o600` for a new file) and renames it into place — following a symlinked
-    `models.json` to its target, and creating a dangling link's target rather than replacing the link. Saves are serialized in-process; a changed file is followed by one
+    a shared save never rewrites an override outside the range that only a targeted save can touch — and
+    prunes override objects it empties (never `providers`), writing through `modelsFile`; a changed file is followed by one
     network-disabled `runtime.refresh` on the current generation and the host's `provider.changed`
     signal; a no-op save does neither. Every read also refreshes locally first so external pi CLI edits
     appear. Live sessions keep the model they were created with; new chats resolve the updated metadata.
-    pi owns schema validation and the effective value; error messages are generic and never carry file
-    contents. Accepted gap: a Central rebuild whose runtime loaded the file before a save and activated
+    pi owns schema validation and the effective value. Accepted gap: a Central rebuild whose runtime loaded the file before a save and activated
     after its refresh serves the old budget until the next read refreshes it.
+  - `customEndpoints` — the settings adapter for the user's own OpenAI-compatible servers (a company
+    gateway or a local llama.cpp / vLLM / sglang / Ollama / LM Studio server), again a `models.json` editor
+    and not a registry: each is a `custom-*` provider with `api: "openai-completions"`, served by pi like any
+    hand-written one, so the pi CLI sees the same models. Only `custom-*` entries are listed, edited or
+    removed; every other provider is left byte-for-byte alone. A saved address the form would refuse
+    (credentials, a query string, not http/https) is not listed either, so its secret never reaches a
+    client; pi still serves it.
+    - **Probe without a server kind.** The base URL loses `/models` / `/chat/completions` / `/completions`
+      suffixes and is refused with credentials or a query string. The host `GET`s `<base>/models` (5s) and,
+      only on a 404 for a base without `/v1`, `<base>/v1/models` once (whose failure is reported unless it
+      is also a 404). The only standard part of that
+      listing is the model ids, so limits come from what servers add to it — `max_model_len` (vLLM, sglang),
+      `max_input_tokens` / `max_output_tokens` (LiteLLM), `context_length`, llama.cpp `meta.n_ctx` — and from
+      same-origin best-effort extras run in parallel (3s each): llama.cpp `/props` (per-slot `n_ctx`, an
+      `enable_thinking` template, `supports_tools`), Ollama `/api/version` then `/api/show` per model
+      (`num_ctx`, capabilities; non-`completion` models dropped) and LM Studio `/api/v0/models` (loaded
+      context, `vlm`, `tool_use`; embeddings dropped). An extra that fails or 404s only leaves facts
+      unknown, so a gateway costs a few harmless 404s. Training lengths are ignored. Failures return a
+      closed reason, never a response body. Probes run on the host because the agent talks to the server
+      from there (and a browser would hit CORS).
+    - **Write only reported facts (decision).** A model's `contextWindow`, `reasoning` and `input` are
+      written only when reported; otherwise pi's defaults apply — 128K context, with pi's overflow
+      recovery compacting and retrying once when the server returns a recognized "context exceeded"
+      error (accepted gap: a server that silently truncates, like Ollama by default, gives it nothing to
+      recover from). `maxTokens` is the reported max output when it fits the context, else ¼ of a known
+      context clamped to 256–16K (pi's 16K default would fail vLLM's prompt + `max_tokens` check on a
+      small context, and compaction cannot recover from that), else omitted. Cost is zero. A new provider
+      gets conservative compat (`supportsStore: false`, `supportsDeveloperRole: false`, `maxTokensField:
+      "max_tokens"`) because pi detects compat from the URL and would send OpenAI-only fields to an unknown
+      host; every OpenAI-compatible server accepts these. An edit keeps the provider's `compat` and every
+      field the form doesn't manage, and removes the managed fields from that model's `modelOverrides`,
+      which pi would otherwise apply over the saved values.
+    - **Keys.** The key never crosses the wire (`hasApiKey`). A typed probe key resolves a whole `$VAR` /
+      `${VAR}` reference and is otherwise used literally; a `!command` is never run by a probe (a narrow
+      subset of pi's resolver, enough for Detect, not a mirror of it). A probe naming `endpointId` reuses
+      the saved key only for that `custom-*` endpoint's unchanged address. The key and the address are
+      read from the same `models.json` snapshot and the saved key goes through the same probe rules —
+      never pi's `runtime.getAuth`, which runs `!command` keys and may still hold an older file's
+      configuration — so a command-backed key is probed without a key (the user can type one), and an
+      externally changed address never receives the previous key. Any other address is probed without it,
+      and a keyed probe refuses redirects.
+    - **A server keeps its origin (decision).** pi resolves auth by provider id at request time while a
+      live session keeps the model object it was created with, so changing a provider's origin under the
+      same id lets a refreshed key reach the old origin from an open chat, or an old key and hand-written
+      `headers` reach the new one. An edit may change the path within the same origin; a different server
+      is added as a new one, with a new id. A save is also refused while a model or model override routes
+      to its own `baseUrl` on another origin, which the form neither shows nor manages. An empty key writes
+      the `thinkrail-no-key` placeholder pi needs to count the provider as available. For the same reason
+      a new server's id is never reused: it is `custom-<name or host slug>-<6 random hex>`, so removing a
+      server and adding another with the same name can't hand the new key to a chat still open on the old
+      one.
+    - A save or removal that changes the file refreshes the runtime (best-effort; a refresh failure is
+      logged, since the file is already written) and publishes `provider.changed`; a no-op does neither.
   - `agentSessionManager` — sessions keyed by `session.sessionId` (each `Entry` also tracks its
     `workspaceId`), `createSession({ cwd, workspaceId, model?, thinkingLevel? })` → `createAgentSession(...)`
     with a per-session `SessionManager` **and `buildSessionSettings(cwd, projectTrusted)`** (the user's
@@ -223,7 +279,12 @@ re-opened transcripts provider-valid.
     flight; needs-input is never held. The command change listener and the delegation lifecycle listener
     republish the parent's state on a coalesced `setImmediate`, after the same-tick completion delivery
     that wakes the parent has already flipped it to running — so the last finishing child never flashes
-    the dot before the woken turn. A completion that does not wake the parent (user stop) releases the hold
+    the dot before the woken turn. The portable packages own that same-tick wake, also while their
+    post-settle idle flush is pending ([[module-pi-subagents]] Result delivery). Queuing the republish
+    behind that flush's `setTimeout(0)` instead was rejected: it leans on cross-module timer order and
+    still flashes whenever the flush runs late. The one remaining flash is a wake pi defers: a result
+    landing during the `agent_settled` emission, after this listener published idle. Only a settle handler
+    could deliver one there; ThinkRail's are synchronous and command exits arrive as I/O callbacks. A completion that does not wake the parent (user stop) releases the hold
     on that republish; a delivery gated by a reload or trash hold also releases first, and its later wake
     clears the unread again. Disk-only sessions have no live work and never hold. The same fact is published as
     `backgroundWork`, so clients show the idle chat as working (contracts' `isSessionWorking`) instead of
@@ -717,7 +778,8 @@ re-opened transcripts provider-valid.
     ignore floating-point noise) are missing, never as a negative correction. Forked children
     (header `parentSession`) are skipped because their copied history carries the parent's own spend.
     A host-injected `setSubagentConcurrencyResolver` supplies each service's per-chat
-    limit at creation, and `refreshSubagentConcurrency(workspaceId?)` re-resolves and live-resizes the
+    limit at creation (`null`, the default, leaves new services on the core limit), and
+    `refreshSubagentConcurrency(workspaceId?)` re-resolves and live-resizes the
     cached services (core `setMaxConcurrentPerParent`) after a global or workspace limit change; `subagentsFor(workspaceId, isEnabled, canDeliverCompletion)` creates one retained portable
     `Subagents` owner per parent; its extension is injected on every resource load. A host-injected
     `setSubagentsEnabledResolver` maps that
@@ -1053,8 +1115,9 @@ re-opened transcripts provider-valid.
   the runtime-generation facade (`usePiRuntime`, candidate prepare/activate, current generation id, and the
   closed `load-failed` outcome—no manager internals) plus `configurePiRuntime`/factory test seams and the
   pre-bootstrap `configurePiRuntimeGenerationInitializer` composition seam; `listModelContextSettings` /
-  `setModelContextWindow` / `setModelContextPublisher` (the `modelContext` adapter and its
-  `provider.changed` seam); `piLoginOptions` (pi login options
+  `setModelContextWindow` (the `modelContext` adapter); `listCustomEndpoints` / `probeCustomEndpoint` /
+  `saveCustomEndpoint` / `removeCustomEndpoint` (the `customEndpoints` adapter); `setModelsFilePublisher`
+  (their shared `provider.changed` seam); `piLoginOptions` (pi login options
   carrying the lazily created installation device id, for `auth`);
   `completeOnce`/`pickModel` +
   `OneShotRequest`/`OneShotResult`/`ModelTier`; the `webUiContext` seams (including `publishSessionNotice`);
@@ -1105,7 +1168,11 @@ re-opened transcripts provider-valid.
   set; this module owns compose-time filtering and live activation timing);
   the `set_title` seam (`setTitleToolHost` + `TitleToolHost`/`SET_TITLE_TOOL_NAME`/`SetTitleParams`);
   the bundled-artifact seam (`registerBundledRuntime` +
-  `BundledExtensions`/`BundledExtensionFactory`).
+  `BundledExtensions`/`BundledExtensionFactory`). The publishers, resolvers and handlers above that
+  `createServer` installs return to their module default at its `stop()` — no-op publishers and, via
+  `null`, the default resolver policy, no concurrency resolver, and the unavailable `request_review` /
+  `resolve_comment` / `set_title` handlers. The PI runtime, its factories, the session manager factory
+  and `registerBundledRuntime` are not reset by `stop()`; whoever configures them restores them.
 - **Allowed deps:** `@earendil-works/pi-coding-agent` (runtime); `@earendil-works/pi-ai` (types + test
   fixtures + **pure catalog helpers value-imported from the package root** — today exactly
   `getSupportedThinkingLevels` + `clampThinkingLevel`, data-only projections over `Model`; *dispatch*
@@ -1119,7 +1186,8 @@ re-opened transcripts provider-valid.
   skill roots — `agent` never imports an `@thinkrail/ext-*` package or its pi package directly; the barrel
   stays Node-loadable for the workflow harness ([[module-workflow-tests]]) because a registry extension
   over raw third-party `.ts` loads it lazily, see [[module-ext-web-access]]); `typebox` (the host tools' parameter schemas); `jsonc-parser` (targeted
-  `models.json` edits in `modelContext`); `trash` (reached only through the
+  `models.json` edits in `modelsFile`, `modelContext` and `customEndpoints`); global `fetch` (only
+  `customEndpoints`' user-initiated probes of the address the user typed); `trash` (reached only through the
   sibling **`trash` module** — see [[submodule-server-trash]]: one path, globbing disabled, allowed to
   throw, never degraded to `unlink`; the launcher's staged-helper and procfs-parser seams live there too,
   because `changes`' whole-file revert needs the same primitive);
@@ -1210,6 +1278,15 @@ normalized title is already current. A live session writes through `AgentSession
 session opens its exact transcript with `SessionManager.open(...).appendSessionInfo(...)` without attaching an
 agent or resolving a model. Both paths publish the same `session_info_changed` Pi event, while
 `SessionSummary.title` remains the hydration projection.
+
+**The name rides the state record.** Every `SessionStateRecord` the manager builds carries `title`: a live
+entry reads `AgentSession.sessionName`, and it is part of `publishEntryState`'s dedupe key, so the publish
+that follows every registered-session event — a rename's `session_info_changed` included — pushes the new
+name; a disk row reads the manager the collector has just opened (not the listing's `SessionInfo.name`,
+which an awaited discovery can leave older than the transcript read beside it), and a disk-only rename
+publishes that chat's complete record (`diskStateRecord`, state + title + first prompt) after its event.
+`""` means unnamed. It costs no transcript read — the collector and the rename already hold the manager —
+and the name is read as pi stores it, never re-validated by the write rule.
 
 The guarded write remains authoritative across the async race. `onlyIfUnnamed` performs the check immediately
 beside the append and is the compare-and-set the `set_title` handler uses (its `false` return is how the

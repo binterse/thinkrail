@@ -44,6 +44,7 @@ import {
 	isMcpLoginId,
 	isPiSessionId,
 	listAvailableModels,
+	listCustomEndpoints,
 	listModelContextSettings,
 	listProjectAliasSkillNames,
 	listSessionStates,
@@ -54,6 +55,7 @@ import {
 	markWorkspaceUnread,
 	notifyExtUi,
 	nudgeSession,
+	probeCustomEndpoint,
 	projectTrustSummary,
 	promptSession,
 	readBackgroundCommandOutput,
@@ -62,6 +64,7 @@ import {
 	refreshSubagentConcurrency,
 	refreshSubagentTools,
 	reloadSessionResources,
+	removeCustomEndpoint,
 	removeQueuedSession,
 	removeSession,
 	removeWorkspaceSessions,
@@ -69,6 +72,7 @@ import {
 	replyMcpProbe,
 	resolveExtUi,
 	respondToTool,
+	saveCustomEndpoint,
 	sendReviewFixToSession,
 	setModelContextWindow,
 	setSessionModel,
@@ -104,7 +108,14 @@ import {
 import { findBranchReviewOutcome, providerFromRemoteUrl } from "../branch-review";
 import { forgetWorkspaceChanges, revertChange, undoChange } from "../changes";
 import { selectDirectory } from "../dialog";
-import { listAvailableEditors, openEditor, revealInFileManager } from "../editors";
+import {
+	listAvailableEditors,
+	openEditor,
+	openFileInVsCode,
+	openWithDefaultApp,
+	revealInFileManager,
+	revealPath,
+} from "../editors";
 import { hostEnvironmentStatus, updateHostEnvironment } from "../environment";
 import { listExtensionCatalog } from "../extensions";
 import {
@@ -119,7 +130,8 @@ import {
 	surveyIsCompleted,
 	surveyResponse,
 } from "../feedback";
-import { readDir, readFile } from "../fs";
+import { fontsDir, listInstalledFonts, readUserFonts } from "../fonts";
+import { pathInfo, readDir, readFile } from "../fs";
 import {
 	commitsAheadOf,
 	countPushDivergence,
@@ -352,6 +364,12 @@ async function sendUserMessage(
 		recordAcceptedMessage(clientKey);
 	}
 	return { ok: true };
+}
+
+function revealDataFolder(dir: string) {
+	mkdirSync(dir, { recursive: true });
+	revealInFileManager(dir);
+	return { ok: true } as const;
 }
 
 function resolveTemplateReadDirs(params: TemplateReadLocation) {
@@ -799,6 +817,14 @@ const handlers: WsHandlers = {
 		void ensureWatch(p.workspaceId);
 		return readFile(p.workspaceId, p.path);
 	},
+	"fs.pathInfo": (p) => pathInfo(p.workspaceId, p.path),
+	"fs.open": (p) => {
+		const { absolutePath } = pathInfo(p.workspaceId, p.path);
+		if (p.action === "vscode") openFileInVsCode(absolutePath);
+		else if (p.action === "default") openWithDefaultApp(absolutePath);
+		else revealPath(absolutePath);
+		return { ok: true } as const;
+	},
 	"spec.graph": (p) => {
 		void ensureWatch(p.workspaceId);
 		return specGraph(p.workspaceId);
@@ -993,19 +1019,12 @@ const handlers: WsHandlers = {
 	"packages.setResourceEnabled": (p) => packagesSetResourceEnabled(p),
 	"packages.reveal": (p) => packagesReveal(p),
 	"locales.list": () => readLocalLocales(),
-	"locales.reveal": () => {
-		const dir = localesDir();
-		mkdirSync(dir, { recursive: true });
-		revealInFileManager(dir);
-		return { ok: true } as const;
-	},
+	"locales.reveal": () => revealDataFolder(localesDir()),
 	"themes.list": () => readUserThemes(),
-	"themes.reveal": () => {
-		const dir = themesDir();
-		mkdirSync(dir, { recursive: true });
-		revealInFileManager(dir);
-		return { ok: true } as const;
-	},
+	"themes.reveal": () => revealDataFolder(themesDir()),
+	"fonts.list": () => readUserFonts(),
+	"fonts.installed": () => listInstalledFonts(),
+	"fonts.reveal": () => revealDataFolder(fontsDir()),
 	"project.acknowledgeSkills": (p) => {
 		return acknowledgeProjectSkills(p.id, p.names);
 	},
@@ -1290,6 +1309,10 @@ const handlers: WsHandlers = {
 	"model.setContextWindow": (p) => {
 		return setModelContextWindow(p.target, p.contextWindow);
 	},
+	"customEndpoints.list": () => listCustomEndpoints(),
+	"customEndpoints.probe": (p) => probeCustomEndpoint(p),
+	"customEndpoints.save": (p) => saveCustomEndpoint(p),
+	"customEndpoints.remove": (p) => removeCustomEndpoint(p.id),
 	"model.default": () =>
 		observeSetupRead(
 			() => resolveNewChatModel({}),

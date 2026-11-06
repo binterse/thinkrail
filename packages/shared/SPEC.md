@@ -47,10 +47,11 @@ bundled into `apps/web`. Exposed through explicit subpath exports, not a barrel.
   `spawnSyncCapturedBytes()` (the same launch and exit semantics with **`stdout` left as bytes**, for a
   caller reading binary child output the UTF-8 decoder would replace — stderr stays decoded text, since a
   diagnostic is only ever read as text) and
-  `spawnDetached()` (fire-and-forget `unref`) over `Bun.spawnSync` / `Bun.spawn`, always
-  `windowsHide: true`. Bun 1.4.0 maps that option to libuv `UV_PROCESS_WINDOWS_HIDE`; the seam prevents
-  background console spawns from omitting it. The two bespoke bounded runners (`server/subprocess`
-  `runBounded`, `jbcentral`'s version/quota runner) set it directly.
+  `spawnDetached()` (fire-and-forget `unref`) over `Bun.spawnSync` / `Bun.spawn`, hiding child windows by
+  default. A caller may set `windowsHide: false` when launching a GUI shell target that must become visible;
+  console children stay hidden unless explicitly overridden. Bun 1.4.0 maps this option to libuv
+  `UV_PROCESS_WINDOWS_HIDE`. The two bespoke bounded runners (`server/subprocess` `runBounded`, `jbcentral`'s
+  version/quota runner) set it directly.
 - **Allowed deps:** Bun/Node runtime (`@types/bun`); `contracts` **types** (`JbcentralInstall`, the wire shape `jbcentralInstall`
   returns — kept in the wire so the server can carry it to the card verbatim); the icon generator's
   build-only `@resvg/resvg-js` and `resedit`.
@@ -328,3 +329,6 @@ bundled into `apps/web`. Exposed through explicit subpath exports, not a barrel.
   `SO_REUSEPORT`), so a bind-and-catch check is unreliable. A refused connection means free.
 - `findFreePort` scans upward from `preferred` (predictable: `24242 → 24243 → …`) and falls back to an
   OS-assigned ephemeral port if the whole scan range is taken.
+- Its answer is a snapshot: another process may bind the port before the caller does, and a later connect
+  probe of an ephemeral-range port can self-connect. Callers bind promptly; tests never re-probe the result
+  (that re-probe flaked under parallel package tests).

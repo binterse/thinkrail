@@ -79,7 +79,16 @@ no job is re-run automatically. They install Chromium without `--with-deps`: the
 carries its shared libraries, and the extra apt packages (CJK/Thai/X fonts) feed no assertion while their
 Ubuntu-mirror download was the slowest step of the job, often for minutes. A missing library fails
 Chromium's launch loudly. The browsers themselves are not cached: the Playwright CDN download takes seconds,
-no slower than an Actions-cache restore of the same bytes.
+no slower than an Actions-cache restore of the same bytes. Jobs download only Chromium's headless shell,
+the one binary headless tests launch, and start it in the background right after `bun install`; a wait
+step joins it, failing with its status, just before the browser tests, so the download overlaps the build
+instead of preceding it.
+
+Jobs that typecheck or build the desktop app first download Electrobun's Hutch toolchain (Hutch, Cottontail,
+the Electrobun core and its Bun toolchain, all GitHub release assets) through
+`.github/scripts/prepare-electrobun.sh`, which retries `electrobun prepare` a bounded number of times;
+`electrobun build` and the typecheck's own `prepare` then find it in `~/.hutch`. Before that step, a dropped
+release download (`ReleaseDownloadFailed`, a timed-out Hutch index) failed whole desktop jobs, 6 in two weeks.
 
 Native artifact smokes run only in shard 1: repeating an identical probe per shard adds no coverage and
 multiplies exposure to runner-environment faults.

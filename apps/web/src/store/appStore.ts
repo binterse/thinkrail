@@ -3,6 +3,7 @@ import type {
 	AppSurvey,
 	ComposerGrowthLimit,
 	ExtUiRequest,
+	FontChoice,
 	GitDiffScope,
 	HostPlatform,
 	HostUpdateNotice,
@@ -38,6 +39,7 @@ import type {
 	ThemeMode,
 	ThinkingLevel,
 	TurnChangeSet,
+	UserFontsSnapshot,
 	UserMessage,
 	UserThemesSnapshot,
 	WireModel,
@@ -57,6 +59,7 @@ import {
 	isSubagentMaxConcurrent,
 	isTerminalWindowsShell,
 	isTodoReviewFixMessage,
+	normalizeFontSettings,
 	normalizeThemePreference,
 	readToolResponseMessage,
 	sameModel,
@@ -83,6 +86,7 @@ import {
 	type LayoutAttention,
 	layoutResourceIdentity,
 	matchesSkillInvocationCommand,
+	nullProto,
 	parseSkillInvocation,
 	randomId,
 	readLayoutNavigationClock,
@@ -406,6 +410,7 @@ export const SettingsSection = {
 	LineWidth: "line-width",
 	Chat: "chat",
 	Layout: "layout",
+	Keyboard: "keyboard",
 	Updates: "updates",
 	Terminal: "terminal",
 	Workspaces: "workspaces",
@@ -1063,7 +1068,9 @@ interface AppState {
 	surveyWindowOpen: boolean;
 	inAppSurvey: AppSurvey | null;
 	notificationPromptOpen: boolean;
-	sessionSwitcherOpen: boolean;
+	searchOpen: boolean;
+	searchSession: number;
+	doubleShiftSearch: boolean;
 	theme: ThemeId;
 	themeMode: ThemeMode;
 	systemThemePair: SystemThemePair | undefined;
@@ -1099,6 +1106,13 @@ interface AppState {
 	installLocalLocales: (snapshot: LocalLocalesSnapshot | null) => void;
 	userThemes: UserThemesSnapshot | null;
 	installUserThemes: (snapshot: UserThemesSnapshot | null) => void;
+	interfaceFont: FontChoice;
+	codeFont: FontChoice;
+	codeFontSize: number;
+	codeLigatures: boolean;
+	fontWeightOffset: number;
+	userFonts: UserFontsSnapshot | null;
+	installUserFonts: (snapshot: UserFontsSnapshot | null) => void;
 	onboardingDismissed: boolean;
 	onboardingWizard: OnboardingWizardGate;
 	customLayoutPresets: LayoutPreset[];
@@ -1397,9 +1411,9 @@ interface AppState {
 	setInAppSurvey: (survey: AppSurvey | null) => void;
 	openNotificationPrompt: () => void;
 	closeNotificationPrompt: () => void;
-	openSessionSwitcher: () => void;
-	closeSessionSwitcher: () => void;
-	toggleSessionSwitcher: () => void;
+	openSearch: () => void;
+	closeSearch: () => void;
+	setDoubleShiftSearch: (enabled: boolean) => void;
 	setChatMessageOrder: (order: ChatMessageOrder) => void;
 	setStreamingResponseMovement: (movement: StreamingResponseMovement) => void;
 	setChatPreferences: (order: ChatMessageOrder, movement: StreamingResponseMovement) => void;
@@ -1496,6 +1510,7 @@ function configPatch(config: AppConfig) {
 			: DEFAULT_CONFIG.disabledPackages,
 		locale: isLocalePreference(config.locale) ? config.locale : DEFAULT_CONFIG.locale,
 		onboardingDismissed: config.onboardingDismissed === true,
+		...normalizeFontSettings(config),
 	};
 }
 
@@ -1812,11 +1827,10 @@ function advanceCenterNavigation(
 				[workspaceId]: {
 					...attention,
 					lastFocusedCenterGroupId: groupId,
-					navigationClockByGroup: Object.assign(
-						Object.create(null),
+					navigationClockByGroup: nullProto<Record<string, number>>(
 						attention.navigationClockByGroup,
 						{ [groupId]: clock },
-					) as Record<string, number>,
+					),
 				},
 			},
 		},
@@ -1966,17 +1980,15 @@ function withoutChat(
 				}),
 		...(!alreadyDeleted
 			? {
-					deletedSessionsByWorkspace: Object.assign(
-						Object.create(null),
+					deletedSessionsByWorkspace: nullProto<Record<string, Record<string, true>>>(
 						s.deletedSessionsByWorkspace,
 						{
-							[workspaceId]: Object.assign(
-								Object.create(null),
+							[workspaceId]: nullProto<Record<string, true>>(
 								s.deletedSessionsByWorkspace[workspaceId],
-								{ [sessionId]: true as const },
-							) as Record<string, true>,
+								{ [sessionId]: true },
+							),
 						},
-					) as Record<string, Record<string, true>>,
+					),
 				}
 			: {}),
 		...(sessionTabs.length > 0
@@ -2277,11 +2289,11 @@ export const useAppStore = create<AppState>((set, get) => ({
 	projects: [],
 	recentProjects: [],
 	workspaces: {},
-	removedWorkspaceIds: Object.create(null) as Record<string, true>,
-	expandedProjectIds: Object.create(null) as Record<string, true>,
+	removedWorkspaceIds: nullProto<Record<string, true>>(),
+	expandedProjectIds: nullProto<Record<string, true>>(),
 	workspaceSettlingSupported: false,
-	settledShelfExpanded: Object.create(null) as Record<string, true>,
-	settledShelfShown: Object.create(null) as Record<string, number>,
+	settledShelfExpanded: nullProto<Record<string, true>>(),
+	settledShelfShown: nullProto<Record<string, number>>(),
 	selectedProjectId: null,
 	activeWorkspaceId: null,
 	activeWorkspaceLiveLatch: false,
@@ -2303,7 +2315,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 	closedChatsByWorkspace: {},
 	chatStartsByWorkspace: {},
 	worktreeCreationsByProject: {},
-	deletedSessionsByWorkspace: Object.create(null) as Record<string, Record<string, true>>,
+	deletedSessionsByWorkspace: nullProto<Record<string, Record<string, true>>>(),
 	terminalsByWorkspace: {},
 	activeTerminalByWorkspace: {},
 	sessions: {},
@@ -2349,7 +2361,9 @@ export const useAppStore = create<AppState>((set, get) => ({
 	surveyWindowOpen: false,
 	inAppSurvey: null,
 	notificationPromptOpen: false,
-	sessionSwitcherOpen: false,
+	searchOpen: false,
+	searchSession: 0,
+	doubleShiftSearch: true,
 	theme: DEFAULT_CONFIG.theme,
 	themeMode: DEFAULT_CONFIG.themeMode,
 	systemThemePair: DEFAULT_CONFIG.systemThemePair,
@@ -2386,6 +2400,13 @@ export const useAppStore = create<AppState>((set, get) => ({
 	installLocalLocales: (snapshot) => set({ localLocales: snapshot }),
 	userThemes: null,
 	installUserThemes: (snapshot) => set({ userThemes: snapshot }),
+	interfaceFont: DEFAULT_CONFIG.interfaceFont,
+	codeFont: DEFAULT_CONFIG.codeFont,
+	codeFontSize: DEFAULT_CONFIG.codeFontSize,
+	codeLigatures: DEFAULT_CONFIG.codeLigatures,
+	fontWeightOffset: DEFAULT_CONFIG.fontWeightOffset,
+	userFonts: null,
+	installUserFonts: (snapshot) => set({ userFonts: snapshot }),
 	onboardingDismissed: DEFAULT_CONFIG.onboardingDismissed,
 	onboardingWizard: "pending",
 	toasts: [],
@@ -2668,9 +2689,9 @@ export const useAppStore = create<AppState>((set, get) => ({
 		set((state) => {
 			const removedSessions = new Set(selectWorkspaceSessionIds(state, workspaceId));
 			return {
-				removedWorkspaceIds: Object.assign(Object.create(null), state.removedWorkspaceIds, {
+				removedWorkspaceIds: nullProto<Record<string, true>>(state.removedWorkspaceIds, {
 					[workspaceId]: true,
-				}) as Record<string, true>,
+				}),
 				workspaceSelectionHistory: state.workspaceSelectionHistory.filter(
 					(id) => id !== workspaceId,
 				),
@@ -4422,11 +4443,10 @@ export const useAppStore = create<AppState>((set, get) => ({
 	openNotificationPrompt: () =>
 		set((state) => (state.notificationPromptOpen ? state : { notificationPromptOpen: true })),
 	closeNotificationPrompt: () => set({ notificationPromptOpen: false }),
-	openSessionSwitcher: () =>
-		set((state) => (state.sessionSwitcherOpen ? state : { sessionSwitcherOpen: true })),
-	closeSessionSwitcher: () => set({ sessionSwitcherOpen: false }),
-	toggleSessionSwitcher: () =>
-		set((state) => ({ sessionSwitcherOpen: !state.sessionSwitcherOpen })),
+	openSearch: () => set((state) => ({ searchOpen: true, searchSession: state.searchSession + 1 })),
+	closeSearch: () => set((state) => (state.searchOpen ? { searchOpen: false } : state)),
+	setDoubleShiftSearch: (doubleShiftSearch) =>
+		set((state) => (state.doubleShiftSearch === doubleShiftSearch ? state : { doubleShiftSearch })),
 	showSurveyInvitation: () =>
 		set((state) => (state.surveyInvitationOpen ? state : { surveyInvitationOpen: true })),
 	hideSurveyInvitation: () => set({ surveyInvitationOpen: false }),
