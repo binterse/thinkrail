@@ -1703,3 +1703,13 @@ Scheduled prompts snapshot model and reasoning using the existing ModelEffortPic
 provider icon in each scheduled row exposes the full pair on hover and opens the same picker;
 only the editor for an already saved schedule contains that picker. New schedules
 automatically snapshot the composer pair without showing a second model control. These choices update only that schedule.
+
+`ChatView` owns scheduled-prompt reads, change-event subscription, and mutations; `Composer` passes the
+current records and operation callbacks to the props-driven `ScheduledPrompts` view. New schedules wait
+until template selection and image decoding are complete, and save the finalized template-slot text. After
+the server accepts a save, the composer clears only if its text and attachments still match the draft that
+was opened for scheduling.
+
+Editing a queued message restores its pinned model and reasoning with the draft. Resubmitting that draft
+keeps the pin; while a run is active it enters the follow-up lane so the model switch happens after the
+current turn rather than changing the model mid-turn.

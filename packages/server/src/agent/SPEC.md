@@ -258,15 +258,18 @@ re-opened transcripts provider-valid.
 
     New-session and pre-session entrypoints capture the current generation; operations on a live session use
     that session's retained runtime. `abort` remains available as the cancellation control path.
-    `prompt`/`steer`/`followUp` (with images) /
+    `prompt`/`steer`/`followUp` (with images; `prompt` and `followUp` may carry a pinned model/reasoning pair) /
     — **both `promptSession` and `followUpSession` resolve the delivery mode against the session's
     LIVE `isStreaming`, never the caller's belief about it**: `prompt()` throws mid-turn (so it falls
     back to `steer`), and pi's `followUp()` only *enqueues* into a queue that a run already in flight
     drains (so on an idle session it falls back to `prompt`, else the message parks forever — the way a
     `review.sendBatch` into a re-attached review chat marked its comments sent to an agent that never
-    saw them) / **`clearQueueSession`** (Pi's `clearQueue()`: drains both queues but returns only text,
+    saw them). A pinned `promptSession` observed during a live turn uses the follow-up lane instead of steer,
+    preserving the selected pair until that separate prompt starts; when idle, it applies the pair before
+    `prompt()`. Pinned follow-ups are consumed one at a time, applying their pair at the provider request
+    boundary. / **`clearQueueSession`** (Pi's `clearQueue()`: drains both queues but returns only text,
     while the host snapshots its reconciled transient mirror first and returns complete per-message text +
-    images. Pi emits the emptying `queue_update`). Its optional text-only precondition rejects before
+    images + any pinned model selection. Pi emits the emptying `queue_update`). Its optional text-only precondition rejects before
     touching Pi whenever either tracked lane has queued images; manual compaction uses that guard, while
     **`abortSession(..., true)`** synchronously claims the Stop and drains the queue in one manager operation.
     If an accepted question result is still persisting, Stop grants it a bounded grace period before signalling

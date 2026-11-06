@@ -2332,8 +2332,14 @@ export async function promptSession(
 	sessionId: string,
 	text: string,
 	images?: ImageContent[],
+	modelSelection?: PromptModelSelection,
 ): Promise<void> {
 	const entry = mustGetEntry(sessionId);
+	if (modelSelection) validatePromptModelSelection(sessionId, modelSelection);
+	if (entry.session.isStreaming && modelSelection) {
+		await followUpEntry(entry, text, images, true, modelSelection);
+		return;
+	}
 	admitRun(entry);
 	if (entry.session.isStreaming) {
 		await steerEntry(entry, text, images);
@@ -2341,6 +2347,7 @@ export async function promptSession(
 	}
 	const release = admitPreflight(entry);
 	try {
+		if (modelSelection) await applyPromptModelSelection(entry, modelSelection);
 		await entry.session.prompt(text, answeringDialogs(entry, images));
 	} finally {
 		release();
@@ -2370,8 +2377,10 @@ export async function followUpSession(
 	sessionId: string,
 	text: string,
 	images?: ImageContent[],
+	modelSelection?: PromptModelSelection,
 ): Promise<void> {
-	await followUpEntry(mustGetEntry(sessionId), text, images, true);
+	if (modelSelection) validatePromptModelSelection(sessionId, modelSelection);
+	await followUpEntry(mustGetEntry(sessionId), text, images, true, modelSelection);
 }
 
 export function validatePromptModelSelection(

@@ -4325,15 +4325,30 @@ test("scheduled follow-ups keep per-prompt provider/model/reasoning behind exist
 		await scheduleFollowUpSession(session.sessionId, "remove me", undefined, pairB);
 		const removed = await removeQueuedSession(session.sessionId, "followUp", 1);
 		expect(removed.removed?.modelSelection).toEqual(pairB);
+		if (!removed.removed) throw new Error("The pinned follow-up was not removed");
+		await followUpSession(
+			session.sessionId,
+			removed.removed.text,
+			removed.removed.images ? [...removed.removed.images] : undefined,
+			removed.removed.modelSelection,
+		);
 		const restored = clearQueueSession(session.sessionId);
-		expect(restored.followUp[0]?.modelSelection).toEqual(pairA);
+		expect(restored.followUp.map((item) => item.modelSelection)).toEqual([pairA, pairB]);
 		for (const item of restored.followUp)
-			await scheduleFollowUpSession(session.sessionId, item.text, undefined, item.modelSelection);
+			await followUpSession(session.sessionId, item.text, undefined, item.modelSelection);
 		await secondTurn;
 		expect(requests.slice(beforeEdit)).toEqual([
 			{ provider: "scheduled-b", model: "model-b", reasoning: "low" },
 			{ provider: "scheduled-a", model: "model-a", reasoning: "low" },
+			{ provider: "scheduled-b", model: "model-b", reasoning: "high" },
 		]);
+		a.appendResponses([fauxAssistantMessage("PIN_A_IDLE")]);
+		await promptSession(session.sessionId, "edited while idle", undefined, pairA);
+		expect(requests.at(-1)).toEqual({
+			provider: "scheduled-a",
+			model: "model-a",
+			reasoning: "low",
+		});
 
 		await expect(
 			scheduleFollowUpSession(session.sessionId, "bad reasoning", undefined, {

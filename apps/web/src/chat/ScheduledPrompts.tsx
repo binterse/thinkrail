@@ -4,23 +4,27 @@ import {
 	RiEditLine,
 	RiSendPlane2Line,
 } from "@remixicon/react";
-import {
-	type ImageContent,
-	type PromptModelSelection,
-	type ScheduledPromptRecord,
-	type ThinkingLevel,
-	type WireModel,
-	WS_CHANNELS,
+import type {
+	ImageContent,
+	PromptModelSelection,
+	ScheduledPromptRecord,
+	ThinkingLevel,
+	WireModel,
 } from "@thinkrail/contracts";
 import { useT } from "@thinkrail/locales/react";
 import { Popover, PopoverContent, PopoverTrigger } from "@thinkrail/ui/popover";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { randomUuid } from "@/lib";
-import { getTransport } from "@/transport";
 import { ModelEffortPicker, type ModelSelection } from "./ModelEffortPicker";
 import { LEVEL_LABEL } from "./modelPicker";
 import type { ModelPreferences } from "./useModelPreferences";
+
+export interface ScheduledPromptDraftSnapshot {
+	sessionId: string;
+	text: string;
+	imageIds: readonly string[];
+}
 
 const minute = 60_000;
 const remainingTime = (dueAt: number, now: number) => {
@@ -58,12 +62,17 @@ const makeTime = (date: string, time: string) => {
 };
 
 export function ScheduledPrompts({
-	workspaceId,
+	items,
 	sessionId,
-	connectionGeneration,
 	text,
+	draftText,
 	images,
+	imageIds,
+	canSchedule,
 	onSchedule,
+	onUpdate,
+	onCancel,
+	onSendNow,
 	models,
 	currentModel,
 	thinkingLevel,
@@ -73,11 +82,13 @@ export function ScheduledPrompts({
 	onScheduled,
 	listTarget,
 }: {
-	workspaceId: string;
+	items: ScheduledPromptRecord[];
 	sessionId: string;
-	connectionGeneration: number;
 	text: string;
+	draftText: string;
 	images: ImageContent[];
+	imageIds: readonly string[];
+	canSchedule: boolean;
 	onSchedule: (
 		id: string,
 		dueAt: number,
@@ -85,20 +96,28 @@ export function ScheduledPrompts({
 		images: ImageContent[],
 		modelSelection: PromptModelSelection,
 	) => Promise<unknown>;
+	onUpdate: (
+		id: string,
+		dueAt: number,
+		text: string,
+		images: ImageContent[],
+		modelSelection: PromptModelSelection,
+	) => Promise<unknown>;
+	onCancel: (id: string) => Promise<unknown>;
+	onSendNow: (id: string) => Promise<unknown>;
 	models: WireModel[];
 	currentModel: WireModel | null;
 	thinkingLevel: ThinkingLevel;
 	modelPreferences: ModelPreferences;
 	modelsRefreshing: boolean;
 	onRefreshModels: (force: boolean) => void;
-	onScheduled: () => void;
+	onScheduled: (snapshot: ScheduledPromptDraftSnapshot) => void;
 	listTarget: HTMLDivElement | null;
 }) {
 	const t = useT();
 	const lastUsed = useRef(0);
 	const rememberedTime = useRef<number | null>(null);
 	const [now, setNow] = useState(Date.now());
-	const [items, setItems] = useState<ScheduledPromptRecord[]>([]);
 	const [open, setOpen] = useState(false);
 	const [date, setDate] = useState("");
 	const [time, setTime] = useState("");
@@ -111,23 +130,11 @@ export function ScheduledPrompts({
 	const [error, setError] = useState("");
 	const [prompt, setPrompt] = useState(text);
 	const [scheduledImages, setScheduledImages] = useState<ImageContent[]>(images);
-	const refresh = () =>
-		getTransport()
-			.request("scheduledPrompts.list", { workspaceId })
-			.then((all) => setItems(all.filter((item) => item.sessionId === sessionId)))
-			.catch(() => {});
-	useEffect(() => {
-		void refresh();
-	}, [workspaceId, sessionId, connectionGeneration]);
-	useEffect(
-		() =>
-			getTransport().subscribe(WS_CHANNELS.scheduledPromptsChanged, (data) => {
-				const push = data as { workspaceId?: string; records?: ScheduledPromptRecord[] };
-				if (push.workspaceId === workspaceId && push.records)
-					setItems(push.records.filter((item) => item.sessionId === sessionId));
-			}),
-		[workspaceId, sessionId],
-	);
+	const draftSnapshot = useRef<ScheduledPromptDraftSnapshot>({
+		sessionId,
+		text: draftText,
+		imageIds,
+	});
 	useEffect(() => {
 		const id = setInterval(() => setNow(Date.now()), 1000);
 		return () => clearInterval(id);
@@ -168,6 +175,7 @@ export function ScheduledPrompts({
 		);
 		setPrompt(text);
 		setScheduledImages(images);
+		draftSnapshot.current = { sessionId, text: draftText, imageIds: [...imageIds] };
 		setError("");
 		setAbsolute(
 			rememberedTime.current !== null && Date.now() - lastUsed.current < 5 * minute
@@ -177,23 +185,15 @@ export function ScheduledPrompts({
 		setOpen(true);
 	};
 	const save = async () => {
-		if (!valid || dueAt === null || !modelSelection) return;
+		if (!valid || dueAt === null || !modelSelection || (!editing && !canSchedule)) return;
 		setSaving(true);
 		setError("");
 		const pending = editing
-			? getTransport().request("scheduledPrompts.update", {
-					modelSelection,
-					id: editing,
-					workspaceId,
-					dueAt,
-					text: prompt.trim(),
-					...(scheduledImages.length ? { images: scheduledImages } : {}),
-				})
-			: onSchedule(randomUuid(), dueAt, prompt.trim(), images, modelSelection);
+			? onUpdate(editing, dueAt, prompt.trim(), scheduledImages, modelSelection)
+			: onSchedule(randomUuid(), dueAt, prompt.trim(), scheduledImages, modelSelection);
 		await pending
-			.then(async () => {
-				await refresh();
-				if (!editing) onScheduled();
+			.then(() => {
+				if (!editing) onScheduled(draftSnapshot.current);
 				setEditing(null);
 				rememberedTime.current = dueAt;
 				lastUsed.current = Date.now();
@@ -221,19 +221,12 @@ export function ScheduledPrompts({
 	const sendNow = async (id: string) => {
 		if (sendingId) return;
 		setSendingId(id);
-		await getTransport()
-			.request("scheduledPrompts.sendNow", { id, workspaceId })
+		await onSendNow(id)
 			.catch((e: unknown) => setError(e instanceof Error ? e.message : t("chat.schedule.failed")))
-			.finally(async () => {
-				setSendingId(null);
-				await refresh();
-			});
+			.finally(() => setSendingId(null));
 	};
 	const cancel = async (id: string) => {
-		await getTransport()
-			.request("scheduledPrompts.cancel", { id, workspaceId })
-			.catch(() => {});
-		await refresh();
+		await onCancel(id).catch(() => {});
 	};
 	const asPair = (selection: ModelSelection, previous?: ThinkingLevel): PromptModelSelection => ({
 		model: { provider: selection.model.provider, id: selection.model.id },
@@ -245,17 +238,9 @@ export function ScheduledPrompts({
 	});
 	const pickRowModel = async (item: ScheduledPromptRecord, selection: PromptModelSelection) => {
 		setError("");
-		await getTransport()
-			.request("scheduledPrompts.update", {
-				id: item.id,
-				workspaceId,
-				dueAt: item.dueAt,
-				text: item.text,
-				...(item.images ? { images: item.images } : {}),
-				modelSelection: selection,
-			})
-			.then(refresh)
-			.catch((e: unknown) => setError(e instanceof Error ? e.message : t("chat.schedule.failed")));
+		await onUpdate(item.id, item.dueAt, item.text, item.images ?? [], selection).catch(
+			(e: unknown) => setError(e instanceof Error ? e.message : t("chat.schedule.failed")),
+		);
 	};
 	const pickerModel = (selection?: PromptModelSelection) =>
 		models.find(
@@ -385,7 +370,7 @@ export function ScheduledPrompts({
 						type="button"
 						onClick={show}
 						data-testid="schedule-open"
-						disabled={!text.trim() || saving}
+						disabled={!canSchedule || saving}
 						aria-label={t("chat.schedule.open")}
 						className="relative -ml-12 flex h-28 w-40 items-center justify-end rounded-r-full pr-8 text-feedback-warning hover:opacity-80 disabled:pointer-events-none disabled:text-text-subtle"
 					>

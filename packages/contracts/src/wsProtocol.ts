@@ -924,7 +924,12 @@ export interface WsMethodMap {
 		result: { sessionId: string; model: WireModel | null; thinkingLevel: ThinkingLevel };
 	};
 	"session.prompt": {
-		params: { sessionId: string; text: string; images?: ImageContent[] };
+		params: {
+			sessionId: string;
+			text: string;
+			images?: ImageContent[];
+			modelSelection?: import("./piProtocol").PromptModelSelection;
+		};
 		result: Ack;
 	};
 	"session.steer": {
@@ -932,7 +937,12 @@ export interface WsMethodMap {
 		result: Ack;
 	};
 	"session.followUp": {
-		params: { sessionId: string; text: string; images?: ImageContent[] };
+		params: {
+			sessionId: string;
+			text: string;
+			images?: ImageContent[];
+			modelSelection?: import("./piProtocol").PromptModelSelection;
+		};
 		result: Ack;
 	};
 	"session.clearQueue": {

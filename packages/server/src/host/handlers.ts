@@ -1075,7 +1075,7 @@ const handlers: WsHandlers = {
 	},
 	"session.prompt": (p, ctx) => {
 		return sendUserMessage("prompt", p.sessionId, p.text, ctx.clientKey, () =>
-			promptSession(p.sessionId, p.text, p.images),
+			promptSession(p.sessionId, p.text, p.images, p.modelSelection),
 		);
 	},
 	"session.steer": (p, ctx) => {
@@ -1085,7 +1085,7 @@ const handlers: WsHandlers = {
 	},
 	"session.followUp": (p, ctx) => {
 		return sendUserMessage("follow_up", p.sessionId, p.text, ctx.clientKey, () =>
-			followUpSession(p.sessionId, p.text, p.images),
+			followUpSession(p.sessionId, p.text, p.images, p.modelSelection),
 		);
 	},
 	"session.clearQueue": (p) => {
