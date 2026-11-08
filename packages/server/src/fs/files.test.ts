@@ -77,6 +77,16 @@ test("pathInfo refuses a directory junction that resolves outside the worktree",
 	expect(error).toMatchObject({ code: "WORKTREE_PATH_UNAVAILABLE" });
 });
 
+test("readDir keeps symlinks to the current or an ancestor directory as leaves", () => {
+	const loop = join(root, "loop");
+	mkdirSync(loop);
+	symlinkSync(loop, join(loop, "again"), process.platform === "win32" ? "junction" : "dir");
+	symlinkSync(root, join(loop, "up"), process.platform === "win32" ? "junction" : "dir");
+
+	const kinds = Object.fromEntries(readDir("w1", "loop").map((node) => [node.name, node.kind]));
+	expect(kinds).toEqual({ again: "file", up: "file" });
+});
+
 test("workspaceRelativePath names a contained path worktree-relative with / separators", () => {
 	expect(workspaceRelativePath(root, join(root, "src", "auth", "login.ts"))).toBe(
 		"src/auth/login.ts",

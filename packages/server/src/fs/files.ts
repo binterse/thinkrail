@@ -70,7 +70,11 @@ function entryKind(root: string, dir: string, entry: Dirent): FileNode["kind"] {
 	try {
 		const target = join(dir, entry.name);
 		if (!statSync(target).isDirectory()) return "file";
-		return isContained(realpathSync(root), realpathSync(target)) ? "dir" : "file";
+		const realTarget = realpathSync(target);
+		const realDir = realpathSync(dir);
+		return isContained(realpathSync(root), realTarget) && !isContained(realTarget, realDir)
+			? "dir"
+			: "file";
 	} catch {
 		return "file";
 	}

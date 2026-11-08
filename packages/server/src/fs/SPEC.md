@@ -18,7 +18,8 @@ validated native path and file/directory kind for an explicit file action.
 
 - **Owns:** `readDir`/`readFile(workspaceId, path)` — every path resolved + contained to the worktree
   root; `.git` hidden; directories sorted first; a symlink lists as `dir` only when its target is a
-  directory inside the worktree, otherwise as `file`. `readDir` reports worktree-relative paths with `/`
+  directory inside the worktree and does not resolve to the current or an ancestor directory, otherwise
+  as `file` so traversal cannot loop through an ancestor link. `readDir` reports worktree-relative paths with `/`
   separators on every OS — the same form git status and watch events use — so a browser can match a
   listed node to a changed path (Windows' `relative()` would otherwise yield `src\auth`). (`.thinkrail/` is **not** hidden — it is shown like any
   other dir, so future host-managed content there stays visible; its ephemeral `context/` is kept out of
