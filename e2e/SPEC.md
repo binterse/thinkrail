@@ -71,7 +71,9 @@ headless workflow suite keeps its local PI-auth mode. Concurrent provider turns 
 cost, and determinism, so neither is sharded. The agent runner builds the web artifact under the caller's
 normal environment, then removes PI's complete ambient provider/cloud credential environment surface before
 starting Playwright or any host. The hosts also receive the same complete hermetic `PATH` as the default
-suite. This split is load-bearing: build
+suite. On Windows, the hermetic path includes only the installed Git runtime directories required for
+local repositories and `%SystemRoot%\\System32` for Windows command resolution; it does not inherit the
+caller's complete `PATH`. This split is load-bearing: build
 tooling may need developer-installed executables and caller environment, while exact-model preflight must
 prove Central without an API key, token, Google ADC/project/location, or AWS profile/key/token/container/
 web-identity/config source making another provider available. A drift canary derives every uppercase
@@ -223,6 +225,14 @@ Playwright run writes no output, so the last good file survives.
 - **Variants.** Run the command from a worktree root to measure that worktree; the output records
   `rootDir`, `gitHead`, `dirty` and `dirtyTreeHash` (sha256 of `git status --porcelain` plus `git diff HEAD`;
   untracked file contents are not hashed).
+
+## Files context-menu coverage
+
+`files-context-menu.spec.ts` covers both renderer paths. The browser fallback exercises the existing
+Radix menu; native-path cases set Electrobun's WebView2 capability flag and test the row contribution,
+keyboard/event dispatch, clipboard, stale-host gating and failure feedback. These simulated native-path
+cases prove the web contract only; the Windows desktop capture is the evidence for the combined native
+menu and its built-in **Granska** entry.
 
 ## Desktop-backed mode
 

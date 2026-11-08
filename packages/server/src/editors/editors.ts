@@ -1,4 +1,5 @@
-import { dirname } from "node:path";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { EditorInfo } from "@thinkrail/contracts";
 import { CodedError } from "@thinkrail/shared/codedError";
 import { spawnDetached } from "@thinkrail/shared/spawn";
@@ -31,8 +32,22 @@ const TERMINAL_CANDIDATE = { id: "vim", label: "Vim", bin: "vim" };
 
 export type WhichFn = (bin: string) => string | null;
 
-export const defaultWhich: WhichFn = (bin) =>
-	Bun.which(bin, { PATH: process.env.PATH ?? "" }) ?? null;
+function installedWindowsVsCode(): string | null {
+	if (process.platform !== "win32") return null;
+	const candidates = [
+		process.env.LOCALAPPDATA &&
+			join(process.env.LOCALAPPDATA, "Programs", "Microsoft VS Code", "Code.exe"),
+		process.env.ProgramFiles && join(process.env.ProgramFiles, "Microsoft VS Code", "Code.exe"),
+		process.env["ProgramFiles(x86)"] &&
+			join(process.env["ProgramFiles(x86)"], "Microsoft VS Code", "Code.exe"),
+	].filter((candidate): candidate is string => Boolean(candidate));
+	return candidates.find(existsSync) ?? null;
+}
+
+export const defaultWhich: WhichFn = (bin) => {
+	const onPath = Bun.which(bin, { PATH: process.env.PATH ?? "" }) ?? null;
+	return onPath ?? (bin === "code" ? installedWindowsVsCode() : null);
+};
 
 export type SpawnFn = (cmd: string[], options?: { windowsHide?: boolean }) => void;
 

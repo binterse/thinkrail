@@ -44,8 +44,9 @@ create the tools it needs based on how you actually work.
   with the repository's last-used method, reopen it, or delete the remote branch.
 - **A real IDE around the agent.** A splittable workbench of Monaco editor tabs, a Files tree with live git
   change marks and a Changed view, terminals, and documents — all scoped to the active workspace. In the
-  Files tree, right-click a file or folder to open it in VS Code or its default app, reveal it in the host
-  file manager, or copy its absolute path. Leave anchored review comments on files and diffs and send them
+  Windows desktop Files → All, right-click a file or folder to add VS Code, default-app, Explorer and
+  absolute-path actions to WebView2's native menu; its browser entries, including Granska, remain. Leave
+  anchored review comments on files and diffs and send them
   to a chat as structured context, or open the worktree in your installed IDE.
 - **Chats that stream like the engine thinks.** Several concurrent `pi` sessions per workspace, each with
   its own model and live token and cost readout. Steer a running turn or queue a follow-up, delegate to

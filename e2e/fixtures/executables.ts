@@ -71,7 +71,34 @@ function resolveWindowsGitExecutable(): string {
 }
 
 export function hermeticE2ePath(fakeBinDir: string): string {
-	return [fakeBinDir, "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(delimiter);
+	if (process.platform !== "win32") {
+		return [fakeBinDir, "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(delimiter);
+	}
+
+	const gitExecutable = (process.env.PATH ?? "")
+		.split(delimiter)
+		.filter(Boolean)
+		.map((directory) => join(directory, "git.exe"))
+		.find(existsSync);
+	const systemRoot = process.env.SystemRoot ?? "C:\\Windows";
+	const windowsPaths = [join(systemRoot, "System32")];
+	if (gitExecutable) {
+		let gitRoot = dirname(gitExecutable);
+		for (let depth = 0; depth < 4; depth++) {
+			if (existsSync(join(gitRoot, "mingw64", "bin")) && existsSync(join(gitRoot, "usr", "bin"))) {
+				break;
+			}
+			const parent = dirname(gitRoot);
+			if (parent === gitRoot) break;
+			gitRoot = parent;
+		}
+		windowsPaths.unshift(
+			dirname(gitExecutable),
+			join(gitRoot, "mingw64", "bin"),
+			join(gitRoot, "usr", "bin"),
+		);
+	}
+	return [fakeBinDir, ...new Set(windowsPaths)].join(delimiter);
 }
 
 export function hermeticE2eShell(fakeBinDir: string): string {

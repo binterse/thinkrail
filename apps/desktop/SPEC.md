@@ -29,8 +29,9 @@ engine architecture.
 - **Allowed deps:** `server` for the embedded host and build-support manifest; `shared`
   for release identity, its Windows file identity and the early `resolveShellEnv()` start; `contracts`
   for compatibility/native-bridge types and the shared `createQuitConfirmation` rule; the completed built
-  web artifact; Electrobun `2.0.5` and its generated SDK; build-only `resedit` to close the Electrobun 2.0.5
-  Windows executable-identity gap (below); shared's native icon set as build input; Bun/Node.
+  web artifact; Electrobun `2.0.6` and its generated SDK; the pinned WebView2 context-menu wrapper used by
+  Windows builds; build-only `resedit` to close Electrobun's Windows executable-identity gap (below);
+  shared's native icon set as build input; Bun/Node.
 - **Forbidden:** spawning the CLI or a second engine process; implementing ordinary product feature or
   agent/domain logic; importing web source at runtime; introducing a desktop-only wire or UI state model;
   storing one active location on the backend; or bundling CEF without a new acceptance failure that
@@ -163,6 +164,19 @@ reads its dialog text from that file (English on first run or any read error); t
 a language itself. Role items keep OS-provided labels. The policy is platform-pure and the packaged
 ready seam reports whether registration ran, so unit tests pin menu composition while expanded-app smoke
 pins production wiring.
+
+## Native Files row context actions
+
+On Windows, Files → All marks each eligible row with a WebView2 context-menu contribution. The pinned
+Electrobun native hook reads that row data during `ContextMenuRequested`, appends the localized host
+actions to WebView2's existing `MenuItems`, and leaves `Handled` false so browser entries such as
+**Granska** stay available. A selected item is sent back into the webview with its row target; `FileTree`
+then calls the typed, path-validating file methods. The hook adds nothing for unmarked content, Changed
+rows, or ordinary page right-clicks. Right-click and keyboard context-menu gestures use the same native
+path; the UI does not replace the browser menu with a React/Radix menu when this native capability is
+present. Other renderers retain the existing Radix action menu. The patched DLL is pinned by release URL
+and SHA-256 in the Windows post-build step; it replaces only the wrapper inside the produced app bundle
+after hash verification, leaving the installed ThinkRail app alone.
 
 ### Confirmed quit and close
 

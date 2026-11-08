@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import {
+	defaultWhich,
 	listAvailableEditors,
 	openEditor,
 	openFileInVsCode,
@@ -51,6 +55,37 @@ describe("listAvailableEditors", () => {
 		]);
 	});
 });
+
+test.skipIf(process.platform !== "win32")(
+	"finds a per-user VS Code install when the packaged host PATH omits its code shim",
+	() => {
+		const root = mkdtempSync(join(tmpdir(), "thinkrail-vscode-discovery-"));
+		const executable = join(root, "Programs", "Microsoft VS Code", "Code.exe");
+		const prior = {
+			PATH: process.env.PATH,
+			LOCALAPPDATA: process.env.LOCALAPPDATA,
+			ProgramFiles: process.env.ProgramFiles,
+			ProgramFilesX86: process.env["ProgramFiles(x86)"],
+		};
+		try {
+			mkdirSync(dirname(executable), { recursive: true });
+			writeFileSync(executable, "test executable marker");
+			process.env.PATH = "";
+			process.env.LOCALAPPDATA = root;
+			process.env.ProgramFiles = join(root, "Program Files");
+			process.env["ProgramFiles(x86)"] = join(root, "Program Files (x86)");
+			expect(defaultWhich("code")).toBe(executable);
+			expect(defaultWhich("emacs")).toBeNull();
+		} finally {
+			for (const [key, value] of Object.entries(prior)) {
+				const envKey = key === "ProgramFilesX86" ? "ProgramFiles(x86)" : key;
+				if (value === undefined) delete process.env[envKey];
+				else process.env[envKey] = value;
+			}
+			rmSync(root, { recursive: true, force: true });
+		}
+	},
+);
 
 describe("openEditor", () => {
 	test("throws for an unknown id", () => {

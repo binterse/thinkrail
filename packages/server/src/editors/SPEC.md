@@ -19,8 +19,11 @@ file manager.
   `emacs`, Vim `vim`, and a JetBrains priority list of per-product launcher shims — `idea`, `webstorm`,
   `pycharm`, `goland`, `rider`, `clion`, `phpstorm`, `rubymine` — Toolbox creates one of these on PATH per
   installed product; there is no single "jetbrains" binary, so the first one found becomes the menu's one
-  `"jetbrains"` entry, labeled for whichever product it is). Never a fixed client-side list: an editor that
-  isn't on PATH is simply absent from the result, so the menu can't offer a dead entry. `openEditor(id,
+  `"jetbrains"` entry, labeled for whichever product it is). Windows VS Code also checks its standard
+  per-user and machine install paths for `Code.exe`, because a packaged desktop host may not inherit the
+  user's VS Code `bin` directory on PATH. Never a fixed client-side list: an editor that isn't discoverable
+  on PATH or at those Windows install paths is absent from the result, so the menu can't offer a dead entry.
+  `openEditor(id,
   worktreePath)` resolves the id back to its binary (re-checking PATH — cheap insurance against an
   uninstall between `list` and click) and spawns it detached (`@thinkrail/shared/spawn`'s `spawnDetached`,
   matching `apps/cli`'s `openBrowser`); throws when the id is unknown or no longer installed. `revealInFileManager
@@ -52,7 +55,7 @@ file manager.
   runs the test.
 - **Public surface (barrel):** `listAvailableEditors`, `openEditor`, `openFileInVsCode`, `revealInFileManager`, `openWithDefaultApp`, `revealPath`, `WhichFn`,
   `SpawnFn`.
-- **Allowed deps:** `Bun.which`, `@thinkrail/shared/spawn` (`spawnDetached`) and `@thinkrail/shared/codedError`, `process.env`/`process.platform`,
+- **Allowed deps:** `Bun.which`, `node:fs.existsSync`, `node:path.join`, `@thinkrail/shared/spawn` (`spawnDetached`) and `@thinkrail/shared/codedError`, `process.env`/`process.platform`,
   `contracts` (the `EditorInfo` wire type).
 - **Forbidden:** `host`; sibling features (`workspaces` resolves `worktreePath` before calling in — this
   module never looks up a workspace itself).

@@ -291,11 +291,15 @@ treatment.
   one child and that child is another directory, and the compact row expands/collapses the deepest
   directory as one unit. `ChangesTree` evaluates this against the changed-file tree; `FileTree` resolves
   only visible compact runs through its existing client-side directory reads, so the wire remains a plain
-  immediate-directory listing. Only **All** file rows have the host-action context menu: it resolves the
-  row's contained host path when opened, targets the deepest folder represented by a compact run, and
-  offers VS Code, the default app, file-manager reveal and absolute-path copy. The menu preserves click,
-  preview and expansion gestures; Changed remains owned by `ChangesPanel`. Its wire actions are gated by
-  the advertised file-actions protocol version. The **`+N −M` diff-count badge** is the shared **`DiffStatBadge`**, used
+  immediate-directory listing. Only **All** file rows contribute host actions to the native Windows
+  WebView2 context menu. The row carries the localized labels, availability and workspace-relative target;
+  Electrobun appends those items to WebView2's existing menu without handling or replacing it, so native
+  entries such as **Granska** remain. Renderers without this native capability keep the existing Radix
+  action menu. The target is the deepest folder represented by a compact run.
+  Selection returns to `FileTree`, which uses the existing validated `fs.pathInfo` / `fs.open` host
+  methods and clipboard helper. Normal click, preview and expansion gestures stay on the row; Changed
+  remains owned by `ChangesPanel` and has no host-action contribution. The wire actions are gated by the
+  advertised file-actions protocol version. The **`+N −M` diff-count badge** is the shared **`DiffStatBadge`**, used
   only inside Changes: the flat list's file rows, the tree's file rows, and a tree folder's aggregate only
   while it is collapsed (an expanded folder's children already show those counts).
   `ChangesTree`'s tree build + `+/−` aggregation + shared status glyphs live in the pure

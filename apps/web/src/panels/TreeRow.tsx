@@ -6,7 +6,7 @@ import {
 	RiFolderFill,
 	RiFolderLine,
 } from "@remixicon/react";
-import type { MouseEvent, ReactNode, Ref } from "react";
+import type { KeyboardEventHandler, MouseEvent, PointerEventHandler, ReactNode, Ref } from "react";
 
 export function TreeRow({
 	ref,
@@ -17,6 +17,7 @@ export function TreeRow({
 	subtle = false,
 	dataStatus,
 	dataViewed,
+	nativeContextMenuData,
 	label,
 	labelClassName,
 	trailing,
@@ -24,6 +25,11 @@ export function TreeRow({
 	onClick,
 	onDoubleClick,
 	onContextMenu,
+	onKeyDown,
+	onPointerDown,
+	onPointerMove,
+	onPointerUp,
+	onPointerCancel,
 	onWarm,
 }: {
 	ref?: Ref<HTMLButtonElement> | undefined;
@@ -34,6 +40,7 @@ export function TreeRow({
 	subtle?: boolean;
 	dataStatus?: string | undefined;
 	dataViewed?: boolean;
+	nativeContextMenuData?: string | undefined;
 	label: string;
 	labelClassName?: string;
 	trailing?: ReactNode;
@@ -41,6 +48,11 @@ export function TreeRow({
 	onClick?: ((event: MouseEvent) => void) | undefined;
 	onDoubleClick?: (() => void) | undefined;
 	onContextMenu?: ((event: MouseEvent) => void) | undefined;
+	onKeyDown?: KeyboardEventHandler<HTMLButtonElement> | undefined;
+	onPointerDown?: PointerEventHandler<HTMLButtonElement> | undefined;
+	onPointerMove?: PointerEventHandler<HTMLButtonElement> | undefined;
+	onPointerUp?: PointerEventHandler<HTMLButtonElement> | undefined;
+	onPointerCancel?: PointerEventHandler<HTMLButtonElement> | undefined;
 	onWarm?: ((trigger: "hover" | "focus") => void) | undefined;
 }) {
 	const Chevron = expanded ? ChevronDown : ChevronRight;
@@ -56,9 +68,15 @@ export function TreeRow({
 			data-active={active ? true : undefined}
 			data-status={dataStatus}
 			data-viewed={dataViewed ? true : undefined}
+			data-electrobun-context-menu={nativeContextMenuData}
 			onClick={onClick}
 			onDoubleClick={onDoubleClick}
 			onContextMenu={onContextMenu}
+			onKeyDown={onKeyDown}
+			onPointerDown={onPointerDown}
+			onPointerMove={onPointerMove}
+			onPointerUp={onPointerUp}
+			onPointerCancel={onPointerCancel}
 			onPointerEnter={onWarm && (() => onWarm("hover"))}
 			onFocus={onWarm && (() => onWarm("focus"))}
 			className={`flex h-panel-row w-full min-w-0 items-center gap-4 rounded-sm px-4 text-left tr-text-ui ${tone} outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary ${
