@@ -84,6 +84,8 @@ batches high-frequency Pi events without allowing later wire messages to overtak
   **Session state hydrates on every supported welcome.** `session.stateList` is tokenized by connection
   generation and buffers `session.state` pushes until the complete snapshot returns, folds those full-record
   replacements over their snapshot rows in arrival order, then installs the resulting authoritative map once.
+  A record is installed whole — its `title` and `firstPrompt` travel with it — so a chat's name needs no
+  parallel title sync: a rename republishes the record, and a missed one is repaired by the next snapshot.
   Current-generation failures retain the previous map while retrying with capped backoff; overflowing the
   bounded push buffer restarts the complete read instead of growing without limit, while stale-generation
   outcomes discard their buffers. Pending dialog records replay their exact request, and adding/opening a
@@ -158,14 +160,18 @@ The browser never scrubs or holds a vendor client: the host is the only sanitize
   `watchMcpWorkspace`, `ConnectionStatus`,
   `TransportOptions`, `runHostUpdate`, `supportsHostUpdateRun`, `supportsPlanReview`,
   `supportsPlanSummaryGeneration`, `supportsChangeMutations`, `supportsRichAnchors`, `supportsTurnChanges`,
-  `supportsUserThemes`, `supportsToolResponses`, `respondToTool`,
+  `supportsUserThemes`, `supportsFonts`, `hostUrl`, `uploadUserFont`, `supportsToolResponses`, `respondToTool`,
   `installClientErrorReporting`, `reportClientError`, `clientErrorReport`. `respondToTool(sessionId,
   toolCallId, response)` is the one place a tool response leaves the client (chat and plan page both use
   it): it sends `session.respondToTool` to a v93+ host and the retired `session.answerQuestion` below
   (`supportsToolResponses`), for one compatibility window — [[module-contracts]]. `runHostUpdate` is the typed empty host action
   and `supportsHostUpdateRun` lets `Shell` inject it only for protocol v70+; `supportsUserThemes` (v92) is
   exported because `Shell` must drop user themes (cached or from an earlier host) once a host that cannot
-  serve theme files has welcomed it; `supportsPlanReview` is exported
+  serve theme files has welcomed it; `supportsFonts` (v102) gates the same way for the font settings and the
+  custom-font snapshot (`fonts.list`, refreshed on every welcome and `fonts.changed`), and `uploadUserFont`
+  is the one binary upload — a `PUT` of the raw file to the host's `/fonts/` route with the upload guard
+  header, answered by that file's `UserFontFile` entry — while `hostUrl` resolves a host-relative path
+  (custom face URLs) against the endpoint; `supportsPlanReview` is exported
   because a sibling panel (`PlanPane`) gates the plan-review UI on it — an older host serves no
   `todo.startReview`/`reviewAll`, so the client must not offer them; `supportsPlanSummaryGeneration` (v69) is
   exported because `chat/useChatTodos` gates the auto-summary `todo.generateSummary` request on it — an older

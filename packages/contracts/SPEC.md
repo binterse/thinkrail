@@ -13,7 +13,8 @@ tags: [wire]
 
 The browser↔host wire spine: the single source of truth for the protocol. Types plus a small
 dependency-free runtime: the WS method/channel constants, protocol/feature versions, the small config
-default, narrow cross-ring guards, and the quit-confirmation rule both clients drive. The one package
+default, narrow cross-ring guards, the quit-confirmation rule both clients drive, and the search matcher
+the palette ranks with — kept here so host-side search can rank with the same copy. The one package
 `apps/web` may depend on—which is what lets the UI ship independently of the host.
 
 ## Boundary
@@ -38,7 +39,9 @@ default, narrow cross-ring guards, and the quit-confirmation rule both clients d
   holds — the ring is 20 deep and dies with the process), and **`UNSUPPORTED_CHANGE`** (the selected
   change is a symlink or mode-only mutation that this byte-oriented write path deliberately refuses), plus
   the four `feedback.survey.submit` refusals `SURVEY_INVALID`, `SURVEY_UNAVAILABLE`, `SURVEY_CHANGED` and
-  `SURVEY_NOT_SENT`), so a client can react to one specific failure
+  `SURVEY_NOT_SENT`, and `fonts.installed`'s `INSTALLED_FONTS_UNAVAILABLE`: the host's OS font service could
+  not be read, a failure analytics tells apart from a lost connection while the font picker offers Retry for
+  either), so a client can react to one specific failure
   instead of pattern-matching an error message. A failure earns a code only when a client behaves differently
   for it or Error Tracking must tell it apart (it never sees `message`): **`REQUEST_REPLAY_OVERFLOW`** is the
   latter — the host's replay namespace for this page is full ([[submodule-server-host]]), and the page treats
@@ -49,7 +52,17 @@ default, narrow cross-ring guards, and the quit-confirmation rule both clients d
   `NativeQuitHint` / `NativeCommand` / `NativeShortcutsBridge`, and
   `NativeNotificationInput` / `NativeNotificationBridge`, and `NativeMenuBridge` (translated native menu
   labels), the optional shell-local desktop capabilities);
-  `QUIT_CONFIRMATION` + **`createQuitConfirmation`** + `QuitConfirmationDependencies` from `quitConfirmation`; the value
+  `QUIT_CONFIRMATION` + **`createQuitConfirmation`** + `QuitConfirmationDependencies` from `quitConfirmation`;
+  **`matchFields`** + `parseMatchTerms` + `MATCH_TIER` and the `Match*` types from
+  `match` (the one search matcher: fixed tiers exact > prefix > word start/camel hump/acronym > substring >
+  bounded subsequence of at least three characters, every term required, a quoted `MatchTerm` (`literal`)
+  matched contiguously only, case and Latin diacritics folded — precomposed or decomposed, the ranges
+  still indexing the original text and spanning the marks they cover — combining marks part of their
+  word (never a word start), a secondary field never above substring and, at an equal tier, never chosen
+  over a primary one, path fields matched on the basename first, field-keyed highlight ranges — the
+  browser's palette ranks with it, and it lives here so host-side search ranks with this one copy and
+  their tiers cannot drift);
+  the value
   re-exports
   `DEFAULT_CONFIG`, `DEFAULT_WORKSPACE_NAME` (the host's name for a project's default workspace; clients
   word it in their language until it is renamed), `SYSTEM_LOCALE_PREFERENCE` + **`isLocalePreference(value)`** (`"system"` or a canonical
@@ -58,6 +71,16 @@ default, narrow cross-ring guards, and the quit-confirmation rule both clients d
   user theme files are `UserThemesSnapshot` / `UserThemeFile`, served by `themes.list` from
   `USER_THEMES_PROTOCOL_VERSION`, v92, with each ok file's `manifest` deliberately `unknown` because the
   theme schema is owned by [[submodule-web-themes]]),
+  the font settings — `FONT_ROLES`, `FontFamilyRef` (a bundled face named by its role, or a family name),
+  `FontChoice` (family or `null` for the role's default, plus ≤ `FONT_FALLBACKS_MAX` distinct fallbacks),
+  `CODE_FONT_SIZE` (with the editor's `editorDelta`), `FONT_WEIGHT_OFFSET`, and the guards `isFontFamilyName`
+  (no CSS delimiters or control characters, ≤ `FONT_FAMILY_NAME_MAX_LENGTH`), `isFontFamilyRef`, `isFontRole`,
+  `isFontChoice`, `isCodeFontSize`, `isFontWeightOffset`, `fontFamilyRefKey`, `FontSettings` +
+  `normalizeFontSettings`, and `hasControlCharacter` (shared with the host's font file-name rule) — and user font files as
+  `UserFontsSnapshot` / `UserFontFile` (closed error codes, guarded by `isUserFontFile`) plus
+  `InstalledFontsResult`, served by `fonts.list` /
+  `fonts.installed` from `FONTS_PROTOCOL_VERSION`, v102, with `USER_FONTS_ROUTE`, `USER_FONT_UPLOAD_HEADER` and
+  `USER_FONT_EXTENSIONS` naming the host's `/fonts/` route and its upload guard,
   `THEME_MODES`, `isThemeMode`, `isSystemThemePair`, `normalizeThemePreference`,
   `parsePiPackageInput` (§ pi packages),
   `JBCENTRAL_QUOTA_REFRESH_SECONDS`, `isJbcentralQuotaRefreshSeconds`, `isJbcentralConnected`,
@@ -198,9 +221,14 @@ default, narrow cross-ring guards, and the quit-confirmation rule both clients d
     `{ workspaceId, sessionId, title }`, rejects a title whose trimmed single-line form is blank or exceeds
     `SESSION_TITLE_MAX_LENGTH` (80), and returns an ack; `SESSION_RENAME_PROTOCOL_VERSION` pins the
     mutation and controls to v66 so a newer client hides them against older hosts. The existing Pi event
-    `session_info_changed { name?: string }` is the one live domain update for manual and automatic changes,
-    and `session.list`/`session.getMessages` repair a missed event. No title source/provenance, uniqueness,
-    workspace coupling, or new push channel crosses the wire; session ids remain canonical.
+    `session_info_changed { name?: string }` is the live event for manual and automatic changes, and
+    `session.list`/`session.getMessages` repair a missed event. **`SessionStateRecord.title`** (optional,
+    additive, no version gate) carries the same durable name on every normalized-state record — the
+    `session.stateList` snapshot and each `session.state` push, including the full record a host publishes
+    after renaming a chat that is not live — so a client knows every chat's name, and catches up on a rename
+    it missed, from the state it already installs. A host that sends the field always sends it: `""` is
+    authoritatively unnamed, absent means an older host. No title source/provenance, uniqueness, workspace
+    coupling, or new push channel crosses the wire; session ids remain canonical.
     **`SessionSummary.firstPrompt`** and **`SessionStateRecord.firstPrompt`** (optional, additive, no
     version gate) carry `firstPromptHead` of the transcript's first user prompt beside the title: the
     display fallback for a chat that has no name, never a name — no mutation accepts it, nothing writes
@@ -408,7 +436,9 @@ default, narrow cross-ring guards, and the quit-confirmation rule both clients d
   terminalWindowsShell, composerGrowthLimit, chatLineWidth, fileLineWidth, chatLineWidthBounded,
   fileLineWidthBounded, customLayoutPresets, defaultModel?, defaultEffort?, reviewModel?, reviewEffort?,
   favoriteModels, recentModels, reviewAutoFix, agentReviewEnabled, subagentsEnabled, subagentMaxConcurrent,
-  jbcentralQuotaEnabled, jbcentralQuotaRefreshSeconds, disabledExtensions, onboardingDismissed }` — an extensible bag; the line-width fields join
+  jbcentralQuotaEnabled, jbcentralQuotaRefreshSeconds, disabledExtensions, onboardingDismissed, interfaceFont,
+  codeFont, codeFontSize, codeLigatures, fontWeightOffset }` — an extensible bag; the five font fields join at
+  v102 and normalize together through `normalizeFontSettings` (host load, web store, fonts runtime); the line-width fields join
   the wire at protocol v61 and `terminalWindowsShell` at v62. `onboardingDismissed` (v94, default `false`)
   records that the user finished or skipped the cold-start onboarding wizard, so it never returns. **`DEFAULT_MODEL_PROTOCOL_VERSION`** pins
   v72's AppConfig `defaultModel`/`defaultEffort` and host-side default resolution; the Settings controls are
@@ -639,6 +669,18 @@ default, narrow cross-ring guards, and the quit-confirmation rule both clients d
   only settings **`isSharedModelContextTarget`** accepts (no override, or one inside the range): an
   override the app could not have written is changed only by naming its `{provider,id}`. Saves emit the
   existing `provider.changed` invalidation; no AppConfig state or raw configuration crosses the wire) /
+  **`customEndpoints.list`** / **`customEndpoints.probe`** / **`customEndpoints.save`** /
+  **`customEndpoints.remove`** (v101, `CUSTOM_ENDPOINTS_PROTOCOL_VERSION`; the user's OpenAI-compatible
+  servers stored as pi `models.json` providers whose ids carry **`CUSTOM_ENDPOINT_ID_PREFIX`** (`custom-`,
+  tested by `isCustomEndpointId`). A `CustomEndpointModel` carries only what a server reported —
+  `contextWindow` / `maxTokens` / `reasoning` / `vision` are `null` when it did not say (distinct from an
+  explicit `false`, so a re-detect can clear a capability), and a `tools` hint is never saved. Probing takes `{baseUrl, apiKey? | endpointId?}` (an `endpointId` without `apiKey` reuses
+  that endpoint's saved key host-side, only for its unchanged address) and returns either the normalized
+  `baseUrl` with the models, or a closed `CustomEndpointProbeFailure` (`invalid-url`, `unauthorized`,
+  `timeout`, `unreachable`, `not-openai` with an optional HTTP `status`, `no-models`) so the client
+  localizes it. Saves take a `CustomEndpointDraft` (absent `id` = add; absent `apiKey` = keep, `""` =
+  clear). Every list/save/remove returns `CustomEndpoint[]` (`id`, `name`, `baseUrl`, `hasApiKey` rather
+  than the key, models); a save or removal that changes `models.json` emits `provider.changed`) /
   **`model.clampThinking`** (pi's
   `clampThinkingLevel` for a `{model, level}` pair — the pre-session picker's effort adjustment, so no
   client re-derives pi's policy) / **`provider.status`**
@@ -1139,7 +1181,8 @@ pending dialog its exact replayable request), nullable latest `completion` (stab
 owner-global `completionUnread` receipt projection (held false while an idle session has background work).
 `isSessionWorking` is the one *working* test: `execution` running or `backgroundWork`; an older host omits
 the flag, which reads as false. `SessionStateRecord` adds session/workspace/project
-attribution; `SessionSummary.state` carries the exact attached session's state.
+attribution plus the chat's `title` and `firstPrompt`; `SessionSummary.state` carries the exact attached
+session's state.
 
 `session.stateList` is an authoritative all-workspace snapshot of every top-level live or disk session and
 fails rather than returning an incomplete scan. `session.state` pushes a full record after the causative Pi

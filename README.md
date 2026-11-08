@@ -50,6 +50,9 @@ create the tools it needs based on how you actually work.
   its own model and live token and cost readout. Steer a running turn or queue a follow-up, delegate to
   subagents, and work a shared plan the agent updates and you edit — each completed step can be committed
   and reviewed on its own.
+- **Find chats and run commands from one box.** `⌘K` (or a double tap of Shift) opens a palette that finds
+  chats, workspaces and projects across every open project, runs the app's commands with their shortcuts
+  shown, and jumps to a Settings section. With nothing typed it lists the chats waiting for you.
 - **Specs as ground truth.** A connected graph of `SPEC.md` files lives beside the code; the agent reads,
   searches, and maintains it through dedicated `spec_*` tools, so intent survives the session. The
   read-only Specs tool renders the graph as a tree in the workbench.
@@ -80,6 +83,11 @@ create the tools it needs based on how you actually work.
   — say a personal `~/.pi/agent-personal` — or to pass extra environment variables to the agent, terminals
   and MCP servers, set them in Settings → Environment; they apply on the next start. A variable you set
   when launching (`PI_CODING_AGENT_DIR=… thinkrail`) still wins.
+- **Your own model servers.** Settings → Providers → **Custom servers** connects a company LLM gateway or a
+  model running on your own machine — any OpenAI-compatible server, such as LiteLLM, sglang, vLLM, Ollama,
+  LM Studio or llama.cpp. **Find models** lists what the server serves, with the context and capabilities it
+  reports. The server is saved to `pi`'s `models.json`, so its models appear in the chat model picker and in
+  the `pi` CLI alike.
 - **Desktop app or browser.** A native desktop app, or the `thinkrail` CLI that opens the same app in your
   browser. Both embed the same engine host; app state lives under `~/.thinkrail`.
 - **Your language.** Settings → Language follows your system language or a language you pick; English,
@@ -88,6 +96,9 @@ create the tools it needs based on how you actually work.
   tool output stay as the agent wrote them.
 - **Your themes.** Settings → Appearance ships dark, light, minimal and high-contrast themes. Make your own
   by copying a bundled `*.theme.json`, changing its id and colors, and saving it to `~/.thinkrail/themes`.
+- **Your fonts.** Settings → Appearance picks the interface and code fonts from the bundled Geist and
+  JetBrains Mono, any font installed on your computer, or font files you drop in (kept in
+  `~/.thinkrail/fonts`), with fallback fonts for icon glyphs, a code size, ligatures and a text-weight slider.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset=".github/readme-assets/specs-dark.png">

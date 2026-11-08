@@ -16,14 +16,18 @@ import {
 	CHAT_RESOURCES_PROTOCOL_VERSION,
 	CLIENT_ERROR_REPORT_PROTOCOL_VERSION,
 	CONTEXT_WINDOW_SETTINGS_PROTOCOL_VERSION,
+	CUSTOM_ENDPOINT_ID_PREFIX,
+	CUSTOM_ENDPOINTS_PROTOCOL_VERSION,
 	completionDelivery,
 	customMessageText,
 	DEFAULT_MODEL_PROTOCOL_VERSION,
 	EXTENSION_CATALOG_PROTOCOL_VERSION,
 	FEEDBACK_SURVEY_PROTOCOL_VERSION,
+	FONTS_PROTOCOL_VERSION,
 	HOST_ENVIRONMENT_PROTOCOL_VERSION,
 	HOST_UPDATE_RUN_PROTOCOL_VERSION,
 	isBackgroundCommandCompletionMessage,
+	isCustomEndpointId,
 	isTodoReviewFixMessage,
 	isToolResponsePending,
 	JBCENTRAL_QUOTA_PROTOCOL_VERSION,
@@ -236,6 +240,15 @@ test("tool responses replace the ask-only answer method at v93", () => {
 	expect(WS_METHODS.sessionAnswerQuestion).toBe("session.answerQuestion");
 });
 
+test("user-selectable fonts are pinned to v102", () => {
+	expect(FONTS_PROTOCOL_VERSION).toBe(102);
+	expect(PROTOCOL_VERSION).toBe(102);
+	expect(WS_METHODS.fontsList).toBe("fonts.list");
+	expect(WS_METHODS.fontsInstalled).toBe("fonts.installed");
+	expect(WS_METHODS.fontsReveal).toBe("fonts.reveal");
+	expect(WS_CHANNELS.fontsChanged).toBe("fonts.changed");
+});
+
 test("user theme files are pinned to v92", () => {
 	expect(PROTOCOL_VERSION).toBeGreaterThanOrEqual(USER_THEMES_PROTOCOL_VERSION);
 	expect(USER_THEMES_PROTOCOL_VERSION).toBe(92);
@@ -282,8 +295,8 @@ test("review details and the GitHub review actions are pinned to v88", () => {
 });
 
 test("pi package management and the package switch are pinned to v100", () => {
-	expect(PROTOCOL_VERSION).toBe(100);
 	expect(PI_PACKAGES_PROTOCOL_VERSION).toBe(100);
+	expect(PROTOCOL_VERSION).toBeGreaterThanOrEqual(PI_PACKAGES_PROTOCOL_VERSION);
 	expect(WS_METHODS.packagesList).toBe("packages.list");
 	expect(WS_METHODS.packagesInstall).toBe("packages.install");
 	expect(WS_METHODS.packagesRemove).toBe("packages.remove");
@@ -540,4 +553,12 @@ test("provider warnings are pinned to v99", () => {
 	expect(PROVIDER_WARNINGS_PROTOCOL_VERSION).toBe(99);
 	expect(PROTOCOL_VERSION).toBeGreaterThanOrEqual(PROVIDER_WARNINGS_PROTOCOL_VERSION);
 	expect(WS_METHODS.providerDisableWarning).toBe("provider.disableWarning");
+});
+
+test("custom endpoints are pinned to v101 and own only custom-* providers", () => {
+	expect(CUSTOM_ENDPOINTS_PROTOCOL_VERSION).toBe(101);
+	expect(PROTOCOL_VERSION).toBeGreaterThanOrEqual(CUSTOM_ENDPOINTS_PROTOCOL_VERSION);
+	expect(WS_METHODS.customEndpointsProbe).toBe("customEndpoints.probe");
+	expect(isCustomEndpointId(`${CUSTOM_ENDPOINT_ID_PREFIX}gateway`)).toBe(true);
+	expect(isCustomEndpointId("ollama")).toBe(false);
 });
