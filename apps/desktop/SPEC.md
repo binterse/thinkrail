@@ -170,13 +170,16 @@ pins production wiring.
 On Windows, Files → All marks each eligible row with a WebView2 context-menu contribution. The pinned
 Electrobun native hook reads that row data during `ContextMenuRequested`, appends the localized host
 actions to WebView2's existing `MenuItems`, and leaves `Handled` false so browser entries such as
-**Granska** stay available. A selected item is sent back into the webview with its row target; `FileTree`
-then calls the typed, path-validating file methods. The hook adds nothing for unmarked content, Changed
-rows, or ordinary page right-clicks. Right-click and keyboard context-menu gestures use the same native
-path; the UI does not replace the browser menu with a React/Radix menu when this native capability is
-present. Other renderers retain the existing Radix action menu. The patched DLL is pinned by release URL
-and SHA-256 in the Windows post-build step; it replaces only the wrapper inside the produced app bundle
-after hash verification, leaving the installed ThinkRail app alone.
+**Granska** stay available. The current WebView2 SDK contract accepts PNG icon streams; each row sends
+bounded light and dark PNG variants and the native hook chooses the one matching the Windows menu text
+color. Invalid or oversized image data rejects that contribution. A selected item is sent back into the
+webview with its row target; `FileTree` then calls the typed, path-validating file methods. The hook adds
+nothing for unmarked content, Changed rows, or ordinary page right-clicks. Right-click and keyboard
+context-menu gestures use the same native path; the UI does not replace the browser menu with a
+React/Radix menu when this native capability is present. Other renderers retain the existing Radix action
+menu. The patched DLL is pinned by release URL and SHA-256 in the Windows post-build step; it replaces
+only the wrapper inside the produced app bundle after hash verification, leaving the installed ThinkRail
+app alone.
 
 ### Confirmed quit and close
 

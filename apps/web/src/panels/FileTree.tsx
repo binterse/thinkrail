@@ -28,6 +28,7 @@ import { getTransport } from "../transport";
 import { type ChangeMarks, statusMarkClass } from "./changesModel";
 import { holdEditorWarm, useEditorWarm, warmOnHover } from "./editorWarm";
 import { type ResolvedFolderChain, resolveFolderChain } from "./folderChains";
+import { FILE_ACTION_ICON_PNGS } from "./nativeFileContextMenuIcons";
 import { openFileInTab } from "./openTabs";
 import { TreeRow } from "./TreeRow";
 import { useWorkspaceRead } from "./useWorkspaceRead";
@@ -41,17 +42,6 @@ type PreparedPathInfo = {
 	path: string;
 	promise: Promise<{ absolutePath: string; kind: "file" | "dir" }>;
 };
-
-const FILE_ACTION_ICON_SVGS = {
-	vscode:
-		'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="ButtonText"><path d="M24 12L18.3431 17.6569L16.9289 16.2426L21.1716 12L16.9289 7.75736L18.3431 6.34315L24 12ZM2.82843 12L7.07107 16.2426L5.65685 17.6569L0 12L5.65685 6.34315L7.07107 7.75736L2.82843 12ZM9.78845 21H7.66009L14.2116 3H16.3399L9.78845 21Z"/></svg>',
-	defaultApp:
-		'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="ButtonText"><path d="M10 6V8H5V19H16V14H18V20C18 20.5523 17.5523 21 17 21H4C3.44772 21 3 20.5523 3 20V7C3 6.44772 3.44772 6 4 6H10ZM21 3V11H19L18.9999 6.413L11.2071 14.2071L9.79289 12.7929L17.5849 5H13V3H21Z"/></svg>',
-	reveal:
-		'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="ButtonText"><path d="M3 21C2.44772 21 2 20.5523 2 20V4C2 3.44772 2.44772 3 3 3H10.4142L12.4142 5H20C20.5523 5 21 5.44772 21 6V9H19V7H11.5858L9.58579 5H4V16.998L5.5 11H22.5L20.1894 20.2425C20.0781 20.6877 19.6781 21 19.2192 21H3ZM19.9384 13H7.06155L5.56155 19H18.4384L19.9384 13Z"/></svg>',
-	copyPath:
-		'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="ButtonText"><path d="M6.9998 6V3C6.9998 2.44772 7.44752 2 7.9998 2H19.9998C20.5521 2 20.9998 2.44772 20.9998 3V17C20.9998 17.5523 20.5521 18 19.9998 18H16.9998V20.9991C16.9998 21.5519 16.5499 22 15.993 22H4.00666C3.45059 22 3 21.5554 3 20.9991L3.0026 7.00087C3.0027 6.44811 3.45264 6 4.00942 6H6.9998ZM5.00242 8L5.00019 20H14.9998V8H5.00242ZM8.9998 6H16.9998V16H18.9998V4H8.9998V6Z"/></svg>',
-} as const;
 
 interface TreeFocus {
 	activePath: string | null;
@@ -277,12 +267,14 @@ function FileNodeRow({
 						id: "vscode",
 						label: t("panels.fileTree.openInVsCode"),
 						enabled: hasVsCode,
-						iconSvg: FILE_ACTION_ICON_SVGS.vscode,
+						iconPngLight: FILE_ACTION_ICON_PNGS.vscode.light,
+						iconPngDark: FILE_ACTION_ICON_PNGS.vscode.dark,
 					},
 					{
 						id: "default",
 						label: t("panels.fileTree.openWithDefaultApp"),
-						iconSvg: FILE_ACTION_ICON_SVGS.defaultApp,
+						iconPngLight: FILE_ACTION_ICON_PNGS.defaultApp.light,
+						iconPngDark: FILE_ACTION_ICON_PNGS.defaultApp.dark,
 					},
 					{
 						id: "reveal",
@@ -291,12 +283,14 @@ function FileNodeRow({
 								? "panels.fileTree.revealInWindowsExplorer"
 								: "panels.fileTree.revealInFileManager",
 						),
-						iconSvg: FILE_ACTION_ICON_SVGS.reveal,
+						iconPngLight: FILE_ACTION_ICON_PNGS.reveal.light,
+						iconPngDark: FILE_ACTION_ICON_PNGS.reveal.dark,
 					},
 					{
 						id: "copyPath",
 						label: t("panels.fileTree.copyAbsolutePath"),
-						iconSvg: FILE_ACTION_ICON_SVGS.copyPath,
+						iconPngLight: FILE_ACTION_ICON_PNGS.copyPath.light,
+						iconPngDark: FILE_ACTION_ICON_PNGS.copyPath.dark,
 					},
 				],
 				payload: { workspaceId, path: contextPath },

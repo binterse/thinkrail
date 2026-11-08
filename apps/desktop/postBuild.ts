@@ -6,8 +6,8 @@ import { installPinnedNativeWrapper } from "./src/pinnedNativeWrapper";
 import { brandWindowsExecutable } from "./src/windowsExecutableIdentity";
 
 const WEBVIEW2_CONTEXT_MENU_WRAPPER = {
-	url: "https://github.com/binterse/electrobun/releases/download/v2.0.6-thinkrail-context-menu.3/libNativeWrapper.dll",
-	sha256: "9d5765fe377c9cc1196ba6d2ce5e4a155a98962d3642f1f697367b257233c6a9",
+	url: "https://github.com/binterse/electrobun/releases/download/v2.0.6-thinkrail-context-menu.4/libNativeWrapper.dll",
+	sha256: "208ad07fcfbe24a85024cee01933fcc2a8c975b242d9bc1cfc7a66b0bb5347f0",
 };
 
 const desktopDir = import.meta.dir;

@@ -230,9 +230,10 @@ Playwright run writes no output, so the last good file survives.
 
 `files-context-menu.spec.ts` covers both renderer paths. The browser fallback exercises the existing
 Radix menu; native-path cases set Electrobun's WebView2 capability flag and test the row contribution,
-keyboard/event dispatch, clipboard, stale-host gating and failure feedback. These simulated native-path
-cases prove the web contract only; the Windows desktop capture is the evidence for the combined native
-menu and its built-in **Granska** entry.
+four-action ordering, valid light/dark 16px PNG icon payloads, keyboard/event dispatch, clipboard,
+stale-host gating and failure feedback. These simulated native-path cases prove the web contract only;
+the Windows desktop capture is the evidence for the combined native menu and its built-in **Granska**
+entry.
 
 ## Desktop-backed mode
 

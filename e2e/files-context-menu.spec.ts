@@ -10,7 +10,13 @@ import { enterDefaultWorkspace, openFixtureProject, revealWorkbenchTool } from "
 import { E2E_FIXTURE_REPO } from "./fixtures/paths";
 
 type NativeContextMenuContribution = {
-	items: { id: string; label: string; enabled?: boolean }[];
+	items: {
+		id: string;
+		label: string;
+		enabled?: boolean;
+		iconPngLight: string;
+		iconPngDark: string;
+	}[];
 	payload: { workspaceId: string; path: string };
 };
 
@@ -49,6 +55,14 @@ function expectOrderedItems(contribution: NativeContextMenuContribution) {
 	expect(labels.slice(0, 2)).toEqual(["Open in VS Code", "Open with Default App"]);
 	expect(labels[2]).toMatch(/^Reveal in (Windows Explorer|File Manager)$/);
 	expect(labels[3]).toBe("Copy Absolute Path");
+	for (const item of contribution.items) {
+		for (const icon of [item.iconPngLight, item.iconPngDark]) {
+			const bytes = Buffer.from(icon, "base64");
+			expect(bytes.toString("hex", 0, 8)).toBe("89504e470d0a1a0a");
+			expect(bytes.readUInt32BE(16)).toBe(16);
+			expect(bytes.readUInt32BE(20)).toBe(16);
+		}
+	}
 }
 
 test("Files All contributes ordered native actions for files and compact folders", async ({

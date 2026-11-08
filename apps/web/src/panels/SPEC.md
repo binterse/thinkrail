@@ -293,7 +293,9 @@ treatment.
   directory as one unit. `ChangesTree` evaluates this against the changed-file tree; `FileTree` resolves
   only visible compact runs through its existing client-side directory reads, so the wire remains a plain
   immediate-directory listing. Only **All** file rows contribute host actions to the native Windows
-  WebView2 context menu. The row carries the localized labels, availability and workspace-relative target;
+  WebView2 context menu. The row carries localized labels, availability, a workspace-relative target and
+  two 16px PNG icon variants from the Remix glyphs so Windows can choose a legible icon for its menu
+  text color;
   Electrobun appends those items to WebView2's existing menu without handling or replacing it, so native
   entries such as **Granska** remain. Renderers without this native capability keep the existing Radix
   action menu. The target is the deepest folder represented by a compact run.
