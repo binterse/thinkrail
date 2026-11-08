@@ -144,7 +144,7 @@ import {
 	originUrls,
 	type PushTargetStatus,
 	prefetchBranch,
-	remoteRefOid,
+	remoteRefOidAsync,
 } from "../git";
 import { githubAuthStatus, githubRefresh } from "../github";
 import { clampLimit, getHistoryIndex } from "../history";
@@ -340,7 +340,7 @@ async function archiveTeardown(ws: Workspace): Promise<void> {
 	try {
 		await removeWorkspaceSessions(ws.id, ws.worktreePath);
 		await settleChangeArtifacts(ws.id);
-		reclaimWorktree(ws);
+		await reclaimWorktree(ws);
 	} catch {
 		log.warn(`workspace archive teardown failed for ${ws.id}`);
 	}
@@ -702,7 +702,9 @@ const handlers: WsHandlers = {
 			pushesElsewhere: splitPushUrl !== null,
 			published:
 				measured?.published ??
-				(splitPushUrl ? null : remoteRefOid(ws.worktreePath, `origin/${ws.branch}`) !== null),
+				(splitPushUrl
+					? null
+					: (await remoteRefOidAsync(ws.worktreePath, `origin/${ws.branch}`)) !== null),
 			...(measured?.published && measured.ahead !== undefined && measured.behind !== undefined
 				? { ahead: measured.ahead, behind: measured.behind }
 				: {}),

@@ -19,6 +19,7 @@ import type {
 import type { MessageKey } from "@thinkrail/locales";
 import { useT } from "@thinkrail/locales/react";
 import { Button, IconButton } from "@thinkrail/ui/button";
+import { isImeComposing } from "@thinkrail/ui/keyboard";
 import { Popover, PopoverContent, PopoverTrigger } from "@thinkrail/ui/popover";
 import { IconTooltip } from "@thinkrail/ui/tooltip";
 import { cn } from "@thinkrail/ui/utils";
@@ -37,7 +38,6 @@ import {
 	beginTemplateSlotSession,
 	finalizeTemplateSlotSession,
 	highlightSegments,
-	isPromptKeyEventComposing,
 	type ParsedTemplate,
 	type SlashCommandItem,
 	SlashCommandMenu,
@@ -471,7 +471,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 	};
 
 	const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-		if (isPromptKeyEventComposing(e.nativeEvent)) return;
+		if (isImeComposing(e.nativeEvent)) return;
 		if (slots && !menuOpen) {
 			if (e.key === "Tab") {
 				e.preventDefault();

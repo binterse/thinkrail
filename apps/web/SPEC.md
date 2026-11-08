@@ -172,7 +172,7 @@ change. `dist/` therefore has no profiler timers (`actualStartTime` is absent fr
 - `auth` → `ui`, `lib` (`copyText`; the dialog is store/transport-free — the panel integrates it; the state types need no imports)
 - `store` → `transport` (**type-only** — `ConnectionStatus`), `chat` (**type-only** — `ChatTurn`/`ToolResultState`), `auth` (**type-only** — `LoginState`; the `foldLoginFrame` reducer lives in `store`, like `reduceExtUi`), `contracts` (domain + custom-preset types, never current-layout DTOs), `lib` (shared path/array primitives — a leaf, so no cycle), and `shell/layout` (**type-only** for web-local frame/view state)
 - `transport` → `contracts`, `store` (welcome routing; the `store → transport` back-edge is type-only, so
-  the runtime graph is acyclic), `lib` (plain-HTTP-safe random page identity)
+  the runtime graph is acyclic), `lib` (plain-HTTP-safe random page identity), `constants` (`REPO_URL` for the GitHub star toast)
 - `components` → `lib` (`ErrorBoundary`'s `shallowEqualArrays` for its reset keys) and `constants` (`RunningIcon` draws the shared brand monogram) — both leaves, so any region can still wrap in it; presentational controls consume `ui`
 - `lib` → `themes` (the lazy highlighter uses the one generic CSS-variable Shiki registration), React (the phone-viewport hook only), and `contracts` (types only, e.g. the MCP state vocabulary's `McpServerState`)
 - `themes` → `constants` (the branding storage prefix scopes the first-paint hint and the user-theme cache), `clientPreferences` (native-stable hint storage); `transport` hydrates the store's user-theme snapshot and `shell`'s theme effect installs it
@@ -384,6 +384,14 @@ themselves.
 - Streaming invariant: `text_delta` / `thinking_delta` **APPEND**; `tool_execution_update.partialResult`
   **REPLACE**. Attempt-level `agent_end` never means idle; automatic work ends only at `agent_settled`.
 - Panels stay arrangement-agnostic so the mobile shell is an additive layer, not a rewrite.
+- **An active IME owns every key in a text field.** While a composition is open, Enter, Escape, arrows,
+  Tab and shortcuts belong to the IME. The key that commits or cancels a candidate never submits,
+  renames, cancels a rename, or closes the field or its dialog/popover; only a later ordinary key does.
+  Every text-field key handler here, in `resource-renderers` and in extension web halves first returns on
+  [[module-ui]]'s `isImeComposing`. A handler that contains its keys calls `stopPropagation` before that
+  check. The dialog and popover primitives guard their own Escape. #875: the rule was once stated for
+  `Composer` alone, and 16 other fields drifted until the [[module-ui]] source scan caught them.
+  Global modifier shortcuts (`Mod+K`, `Ctrl+R`, …) are app chords, not text-field keys, and stay ungated.
 - **Every host HTTP route the app composes is proxied by the Vite dev server.** The app reaches the host
   over `/ws`, over the two byte routes `/files` and `/blob` (images, PDFs, notebooks, markdown-relative
   images), always composed through one function (`panels/resourcePane.resourceBytesUrl`), and over
