@@ -10,13 +10,16 @@ tags: [public-surface-checked]
 
 ## Responsibility
 
-Read directories and files inside a workspace's worktree, path-contained, and decide **what a resource's
-bytes are** — the one byte-level classification every content read in the host shares.
+Read directories and files inside a workspace's worktree, path-contained, decide **what a resource's
+bytes are** — the one byte-level classification every content read in the host shares — and return the
+validated native path and file/directory kind for an explicit file action.
 
 ## Boundary
 
 - **Owns:** `readDir`/`readFile(workspaceId, path)` — every path resolved + contained to the worktree
-  root; `.git` hidden; directories sorted first. `readDir` reports worktree-relative paths with `/`
+  root; `.git` hidden; directories sorted first; a symlink lists as `dir` only when its target is a
+  directory inside the worktree and does not resolve to the current or an ancestor directory, otherwise
+  as `file` so traversal cannot loop through an ancestor link. `readDir` reports worktree-relative paths with `/`
   separators on every OS — the same form git status and watch events use — so a browser can match a
   listed node to a changed path (Windows' `relative()` would otherwise yield `src\auth`). (`.thinkrail/` is **not** hidden — it is shown like any
   other dir, so future host-managed content there stays visible; its ephemeral `context/` is kept out of
@@ -36,9 +39,14 @@ bytes are** — the one byte-level classification every content read in the host
   the root itself. `reviews` normalizes anchors through it. It keeps host
   semantics, so a backslash on POSIX stays part of a file name; callers that hold model-written paths turn
   `\` into `/` themselves.
+  **`pathInfo(workspaceId, path)`** uses the same resolver and `stat` to return the contained absolute
+  path and whether the target is a file or directory. It refuses `.git`, missing paths, escapes, and
+  symlink targets that leave the worktree; its path is a host path, never a browser-derived one.
   **Content classification** (`content.ts`, pure, no dependency): `CONTENT_SNIFF_BYTES` names the shared
   8 KiB bounded-head size; `classifyBytes(bytes)` → `{ text, mime? }` — **mime** is what the *bytes*
-  prove (magic numbers for png/jpeg/gif/webp/avif/bmp/ico/pdf/zip/gzip/woff/woff2, plus `image/svg+xml` for
+  prove (magic numbers for png/jpeg/gif/webp/avif/bmp/ico/pdf/zip/gzip/woff/woff2; AVIF accepts `avif` or
+  `avis` in the initial `ftyp` box's major or compatible brands, bounded by that box and the sniff head;
+  plus `image/svg+xml` for
   text whose root element is `<svg>`, directly or behind an XML prolog — a prolog alone is not an
   image, and `application/vnd.git-lfs` for a text file of at most 1 KiB that is exactly the three-line pointer
   `git lfs` itself writes — `version`, `oid sha256:`, `size`, in that order, nothing else, so no prose
@@ -54,10 +62,10 @@ bytes are** — the one byte-level classification every content read in the host
   fallback and treating
   `null` bytes as absence (`hash`/`byteLength` null, `text: true` — nothing to decode, and the empty
   string it pairs with is valid text).
-- **Public surface (barrel):** `readDir`, `readFile`, `resolveWorktreeFile`, `workspaceRelativePath`, `classifyBytes`,
+- **Public surface (barrel):** `readDir`, `readFile`, `pathInfo`, `resolveWorktreeFile`, `workspaceRelativePath`, `classifyBytes`,
   `CONTENT_SNIFF_BYTES`, `mimeFromPath`, `hashBytes`, `decodeText`, `resourceMeta`.
-- **Allowed deps:** `persistence` (workspace lookup); `contracts` (`FileNode`, `ResourceMeta`); Node
-  `fs`/`path`/`crypto`.
+- **Allowed deps:** `persistence` (workspace lookup); `contracts` (`FileNode`, `ResourceMeta`); `shared`
+  (`CodedError` for unsafe or vanished action targets); Node `fs`/`path`/`crypto`.
 - **Forbidden:** `host`; sibling features.
 
 ## Get right

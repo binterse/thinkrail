@@ -17,7 +17,7 @@ import {
 } from "@thinkrail/contracts";
 import type { HydratedRuntime } from "../chat/hydrate";
 import type { ChatTurn, FailureRecovery } from "../chat/types";
-import { userText } from "../lib";
+import { nullProto, userText } from "../lib";
 import {
 	BUILTIN_LAYOUT_PRESETS,
 	emptyWorkspaceView,
@@ -44,7 +44,6 @@ import {
 	selectCurrentRouteChatTarget,
 	selectDiffScope,
 	selectFilesTreeView,
-	selectLastOpenChatSession,
 	selectReadyCompletionAck,
 	selectSkillsStale,
 	selectWorkspaceNavTick,
@@ -253,16 +252,6 @@ test("connection transitions advance reconnect generations and invalidate old pr
 	});
 	store.installWelcomeSnapshot(54, [], []);
 	expect(useAppStore.getState().protocolVersion).toBe(54);
-});
-
-test("selectLastOpenChatSession: active chat tab first, then the most recent chat tab, else null", () => {
-	const store = useAppStore.getState();
-	expect(selectLastOpenChatSession(useAppStore.getState(), "ws1")).toBeNull();
-	store.openChatSession("ws1", "s1", null, "medium");
-	store.openChatSession("ws1", "s2", null, "medium");
-	expect(selectLastOpenChatSession(useAppStore.getState(), "ws1")).toBe("s2");
-	useAppStore.getState().openTab(fileTab("ws1", "a.ts"), "keep");
-	expect(selectLastOpenChatSession(useAppStore.getState(), "ws1")).toBe("s2");
 });
 
 test("pi events route to the right session runtime; chats stay independent", () => {
@@ -3345,7 +3334,7 @@ test("applyWorkspaceRemoved drops the removed workspace's cached spec graph", ()
 test("files tree state keeps per-workspace folders and scroll, and drops a removed workspace", () => {
 	useAppStore.setState({
 		filesTreeByWorkspace: {},
-		removedWorkspaceIds: Object.create(null),
+		removedWorkspaceIds: nullProto<Record<string, true>>(),
 		workspaces: { p1: [pushedWorkspace()] },
 	});
 	const view = () => selectFilesTreeView(useAppStore.getState(), "w1");
@@ -3375,7 +3364,10 @@ test("files tree state keeps per-workspace folders and scroll, and drops a remov
 });
 
 test("revealInFiles expands every ancestor folder and records the revealed file", () => {
-	useAppStore.setState({ filesTreeByWorkspace: {}, removedWorkspaceIds: Object.create(null) });
+	useAppStore.setState({
+		filesTreeByWorkspace: {},
+		removedWorkspaceIds: nullProto<Record<string, true>>(),
+	});
 	useAppStore.getState().setFilesTreeExpanded("w1", ["docs"], true);
 	useAppStore.getState().revealInFiles("w1", "src/auth/login.ts");
 	const view = selectFilesTreeView(useAppStore.getState(), "w1");
@@ -5058,4 +5050,15 @@ test("authority can be given up without replacing the list (a consumer activatin
 	s().dropModelsFreshness();
 	expect(s().modelsFresh).toBe(false);
 	expect(s().models).toBe(refreshed);
+});
+
+test("openSearch starts a fresh palette session even when the palette is already open", () => {
+	useAppStore.setState({ searchOpen: false, searchSession: 0 });
+	useAppStore.getState().openSearch();
+	expect(useAppStore.getState()).toMatchObject({ searchOpen: true, searchSession: 1 });
+	useAppStore.getState().openSearch();
+	expect(useAppStore.getState()).toMatchObject({ searchOpen: true, searchSession: 2 });
+	useAppStore.getState().closeSearch();
+	useAppStore.getState().closeSearch();
+	expect(useAppStore.getState()).toMatchObject({ searchOpen: false, searchSession: 2 });
 });

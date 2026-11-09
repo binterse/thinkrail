@@ -9,13 +9,17 @@ import type {
 	SessionStateRecord,
 	TerminalTabsPush,
 	WorkspaceFsChangedPayload,
+	WsChannel,
 } from "@thinkrail/contracts";
 import {
 	FEEDBACK_SURVEY_PROTOCOL_VERSION,
+	FONTS_PROTOCOL_VERSION,
+	GITHUB_STAR_PROTOCOL_VERSION,
 	LOCALES_PROTOCOL_VERSION,
 	MCP_PROTOCOL_VERSION,
 	PI_PACKAGES_PROTOCOL_VERSION,
 	PROTOCOL_VERSION,
+	USER_FONTS_ROUTE,
 	USER_THEMES_PROTOCOL_VERSION,
 	WS_CHANNELS,
 } from "@thinkrail/contracts";
@@ -50,9 +54,10 @@ import {
 	setMcpPolicyResolver,
 	setMcpStatusPublisher,
 	setMcpToolGrantWriter,
-	setModelContextPublisher,
 	setModelListingPublisher,
+	setModelsFilePublisher,
 	setPiPackagesPublisher,
+	setRequestReviewHandler,
 	setReviewCommentHandler,
 	setSessionCreatedPublisher,
 	setSessionDeletedPublisher,
@@ -92,7 +97,9 @@ import {
 	refreshInAppSurvey,
 	releaseInvitation,
 	setFeedbackPublisher,
+	setGithubStarPublisher,
 } from "../feedback";
+import { watchUserFonts } from "../fonts";
 import { watchLocalLocales } from "../locales";
 import { logger, observeLoggedErrors } from "../log";
 import { loadWorkspaces } from "../persistence";
@@ -137,6 +144,7 @@ import {
 	setWorkspacePublisher,
 } from "../workspaces";
 import { BLOB_PREFIX, FILES_PREFIX, serveBlob, serveWorktreeFile } from "./fileRoutes";
+import { serveUserFonts } from "./fontRoutes";
 import { setFsNudgePublisher } from "./fsNudge";
 import { handleRequest, requestErrorReport, requestMethodDiagnostic } from "./handlers";
 import { provisionInitialTerminal } from "./initialTerminal";
@@ -377,6 +385,9 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 			if (url.pathname.startsWith(BLOB_PREFIX)) {
 				return serveBlob(url.pathname, req.signal);
 			}
+			if (url.pathname.startsWith(USER_FONTS_ROUTE)) {
+				return serveUserFonts(req, url.pathname);
+			}
 			if (staticDir) {
 				return serveStatic(url.pathname, staticDir);
 			}
@@ -419,6 +430,8 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 					ws.subscribe(WS_CHANNELS.themesChanged);
 				if (ws.data.protocolVersion >= PI_PACKAGES_PROTOCOL_VERSION)
 					ws.subscribe(WS_CHANNELS.packagesChanged);
+				if (ws.data.protocolVersion >= FONTS_PROTOCOL_VERSION)
+					ws.subscribe(WS_CHANNELS.fontsChanged);
 				const hostPlatform: HostPlatform =
 					process.platform === "darwin" || process.platform === "win32"
 						? process.platform
@@ -653,6 +666,26 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 		}
 	});
 
+	const githubStarSocket = (clientKey: string) => {
+		const ws = sockets.get(clientKey);
+		return ws && ws.data.protocolVersion >= GITHUB_STAR_PROTOCOL_VERSION ? ws : undefined;
+	};
+	setGithubStarPublisher({
+		canAsk: (clientKey) => githubStarSocket(clientKey) !== undefined,
+		ask: (clientKey, ask) => {
+			const ws = githubStarSocket(clientKey);
+			if (!ws) return false;
+			try {
+				return (
+					ws.send(JSON.stringify({ channel: WS_CHANNELS.feedbackGithubStar, data: ask })) !== 0
+				);
+			} catch {
+				ws.close();
+				return false;
+			}
+		},
+	});
+
 	setSkillAdmissionResolver((workspaceId) => {
 		try {
 			const { projectId, skillOverrides } = getWorkspace(workspaceId);
@@ -765,20 +798,11 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 		),
 	);
 	const stopUserMcpWatch = watchUserMcpConfig({ onSettingsChanged: handlePiSettingsFileChanged });
-	const stopLocalesWatch = watchLocalLocales({
-		onChange: () =>
-			server.publish(
-				WS_CHANNELS.localesChanged,
-				JSON.stringify({ channel: WS_CHANNELS.localesChanged, data: {} }),
-			),
-	});
-	const stopThemesWatch = watchUserThemes({
-		onChange: () =>
-			server.publish(
-				WS_CHANNELS.themesChanged,
-				JSON.stringify({ channel: WS_CHANNELS.themesChanged, data: {} }),
-			),
-	});
+	const nudge = (channel: WsChannel) => () =>
+		server.publish(channel, JSON.stringify({ channel, data: {} }));
+	const stopLocalesWatch = watchLocalLocales({ onChange: nudge(WS_CHANNELS.localesChanged) });
+	const stopThemesWatch = watchUserThemes({ onChange: nudge(WS_CHANNELS.themesChanged) });
+	const stopFontsWatch = watchUserFonts({ onChange: nudge(WS_CHANNELS.fontsChanged) });
 	setWatchPublisher(publishFsChanged);
 	setSkillPathClassifier(isProjectSkillPath);
 	setFsNudgePublisher(publishFsChanged);
@@ -967,7 +991,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 	});
 	setJbcentralChangedPublisher(publishProviderChanged);
 	setLogoutPublisher(publishProviderChanged);
-	setModelContextPublisher(publishProviderChanged);
+	setModelsFilePublisher(publishProviderChanged);
 	setModelListingPublisher(publishProviderChanged);
 
 	const initialConfig = getConfig();
@@ -1012,6 +1036,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 		stopUserMcpWatch();
 		stopLocalesWatch();
 		stopThemesWatch();
+		stopFontsWatch();
 		disposeAllSessions();
 		for (const timer of reapTimers.values()) clearTimeout(timer);
 		reapTimers.clear();
@@ -1021,14 +1046,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 		requestReplays.clear();
 		persistTerminalSessions();
 		closeAllTerminals();
-		setFeedbackPublisher(null);
-		configureSurveySource(null);
-		setSettingsPublisher(null);
-		setModelContextPublisher(null);
-		setModelListingPublisher(null);
-		setJbcentralAppliedPublisher(() => {});
-		setJbcentralChangedPublisher(() => {});
-		setLogoutPublisher(() => {});
+		restoreSeamDefaults();
 		server.stop(true);
 	};
 	const shutdown = (): Promise<void> => {
@@ -1059,6 +1077,53 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 		stop,
 		shutdown,
 	};
+}
+
+function restoreSeamDefaults(): void {
+	setPiTrustSeed(null);
+	setSessionProjectResolver(() => null);
+	setTerminalPublisher(() => "unavailable");
+	setFeedbackPublisher(null);
+	setGithubStarPublisher(null);
+	configureSurveySource(null);
+	setSkillAdmissionResolver(null);
+	setMcpPolicyResolver(null);
+	setMcpToolGrantWriter(() => {});
+	setSubagentsEnabledResolver(null);
+	setSubagentConcurrencyResolver(null);
+	setAgentReviewEnabledResolver(null);
+	setDisabledExtensionsResolver(null);
+	setDisabledPackagesResolver(null);
+	setProjectPublisher(null);
+	setTerminalTabsPublisher(() => {});
+	setWorkspacePublisher(null);
+	setPiPackagesPublisher(null);
+	setWatchPublisher(null);
+	setSkillPathClassifier(null);
+	setFsNudgePublisher(null);
+	setWatchStartedPublisher(null);
+	setRepoMetaPublisher(null);
+	setReviewPublisher(() => {});
+	setReviewFailedPublisher(() => {});
+	setReviewCommentHandler(null);
+	setRequestReviewHandler(null);
+	setTitleToolHost(null);
+	setSettingsPublisher(null);
+	setSessionCreatedPublisher(() => {});
+	setSessionStatePublisher(() => {});
+	setSessionDeletedPublisher(() => {});
+	setMcpLoginPublisher(() => {});
+	setMcpStatusPublisher(() => {});
+	setSessionResourcesPublisher(() => {});
+	setTurnPublisher(() => {});
+	setSessionPublisher(() => {});
+	setExtUiPublisher(() => {});
+	setLoginPublisher(() => {});
+	setJbcentralAppliedPublisher(() => {});
+	setJbcentralChangedPublisher(() => {});
+	setLogoutPublisher(() => {});
+	setModelsFilePublisher(null);
+	setModelListingPublisher(null);
 }
 
 async function serveStatic(pathname: string, staticDir: string): Promise<Response> {

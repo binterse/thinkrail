@@ -1,12 +1,20 @@
 import {
 	RiCircleLine as Circle,
 	RiCircleFill,
+	RiSearchLine,
 	RiSettings3Line as Settings,
 } from "@remixicon/react";
 import type { MessageKey } from "@thinkrail/locales";
 import { useT } from "@thinkrail/locales/react";
 import { IconButton } from "@thinkrail/ui/button";
 import { useEffect, useState } from "react";
+import {
+	applyFontPreference,
+	DEFAULT_FONT_PREFERENCE,
+	installUserFonts,
+	writeFontsHint,
+} from "../fonts";
+import { platformShortcutLabel } from "../lib";
 import { NotificationPermissionPrompt, useAttentionNotifications } from "../notifications";
 import { AnalyticsConsentDialog } from "../panels/AnalyticsConsentDialog";
 import { NewWorkspaceDialog } from "../panels/NewWorkspaceDialog";
@@ -15,6 +23,7 @@ import { SurveyInvitationDialog } from "../panels/SurveyInvitationDialog";
 import { SurveyWindow } from "../panels/SurveyWindow";
 import { Toaster } from "../panels/Toaster";
 import { useBranchStatus } from "../panels/useBranchStatus";
+import { SearchSettings } from "../search";
 import {
 	SettingsSection,
 	selectActiveWorkspace,
@@ -33,20 +42,23 @@ import {
 } from "../themes";
 import {
 	type ConnectionStatus,
+	hostUrl,
 	runHostUpdate,
+	supportsFonts,
 	supportsHostUpdateRun,
 	supportsUserThemes,
 } from "../transport";
 import { UpdateInstallSurfaces, UpdateReadyButton, UpdateSettings, useUpdates } from "../updates";
 import { AppShortcuts } from "./AppShortcuts";
 import { BrandLogo } from "./BrandLogo";
+import { toggleBottomPanel, toggleLeftSide, toggleRightSide } from "./chordActions";
 import { JbcentralQuotaTopbar } from "./JbcentralQuotaTopbar";
 import { LayoutSettings } from "./LayoutSettings";
 import { useLocalLayoutState } from "./layoutState";
 import { LocationBar } from "./locationBar";
 import { NativeWindowControls } from "./NativeWindowControls";
 import { PROJECT_HOME_PROJECTS_REGION_ID, ProjectHome } from "./ProjectHome";
-import { SessionSwitcher } from "./SessionSwitcher";
+import { SearchPaletteHost } from "./SearchPaletteHost";
 import { readSettingsShortcutLabel } from "./useAppShortcuts";
 import { useCollapsibleRegion } from "./useCollapsibleRegion";
 import { useGlobalHotkeys } from "./useGlobalHotkeys";
@@ -90,9 +102,9 @@ export function Shell() {
 	const updates = useUpdates(supportsHostUpdateRun(protocolVersion) ? runHostUpdate : null);
 	const windowControls = useNativeWindowControls();
 	const [newWorkspaceProjectId, setNewWorkspaceProjectId] = useState<string | null>(null);
-	const sessionSwitcherOpen = useAppStore((s) => s.sessionSwitcherOpen);
 
 	const homeProjects = useCollapsibleRegion<HTMLDivElement>(PROJECT_HOME_PROJECTS_REGION_ID);
+	const [searchShortcut] = useState(() => platformShortcutLabel("K"));
 
 	const [themeHint] = useState(readThemeHint);
 	const [settingsShortcut] = useState(readSettingsShortcutLabel);
@@ -122,40 +134,42 @@ export function Shell() {
 		userThemes,
 		userThemesUnsupported,
 	]);
+	const interfaceFont = useAppStore((s) => s.interfaceFont);
+	const codeFont = useAppStore((s) => s.codeFont);
+	const codeFontSize = useAppStore((s) => s.codeFontSize);
+	const codeLigatures = useAppStore((s) => s.codeLigatures);
+	const fontWeightOffset = useAppStore((s) => s.fontWeightOffset);
+	const userFonts = useAppStore((s) => s.userFonts);
+	const fontsSupported = supportsFonts(protocolVersion);
+	useEffect(() => {
+		if (welcomeGeneration === 0) return;
+		if (!fontsSupported) {
+			installUserFonts([]);
+			applyFontPreference(DEFAULT_FONT_PREFERENCE);
+			writeFontsHint(DEFAULT_FONT_PREFERENCE, []);
+			return;
+		}
+		const preference = { interfaceFont, codeFont, codeFontSize, codeLigatures, fontWeightOffset };
+		if (userFonts) installUserFonts(userFonts.files, hostUrl);
+		applyFontPreference(preference);
+		if (userFonts) writeFontsHint(preference, userFonts.files);
+	}, [
+		welcomeGeneration,
+		fontsSupported,
+		interfaceFont,
+		codeFont,
+		codeFontSize,
+		codeLigatures,
+		fontWeightOffset,
+		userFonts,
+	]);
 	useGlobalHotkeys({
-		onProjects: hasActiveWorkspace
-			? () => {
-					if (!activeWorkspaceId) return;
-					useAppStore.getState().enqueueLayoutIntent({
-						kind: "toggle-side",
-						workspaceId: activeWorkspaceId,
-						side: "left",
-					});
-				}
-			: homeProjects.toggle,
-		...(hasActiveWorkspace
-			? {
-					onWorkspace: () => {
-						if (!activeWorkspaceId) return;
-						useAppStore.getState().enqueueLayoutIntent({
-							kind: "toggle-side",
-							workspaceId: activeWorkspaceId,
-							side: "right",
-						});
-					},
-					onBottom: () => {
-						if (!activeWorkspaceId) return;
-						useAppStore.getState().enqueueLayoutIntent({
-							kind: "toggle-bottom",
-							workspaceId: activeWorkspaceId,
-						});
-					},
-				}
-			: {}),
+		onProjects: () => toggleLeftSide(homeProjects.toggle),
+		...(hasActiveWorkspace ? { onWorkspace: toggleRightSide, onBottom: toggleBottomPanel } : {}),
 		...(contextProject
 			? { onNewWorkspace: () => setNewWorkspaceProjectId(contextProject.id) }
 			: {}),
-		onSessionSwitcher: () => useAppStore.getState().toggleSessionSwitcher(),
+		onSearch: () => useAppStore.getState().openSearch(),
 	});
 	return (
 		<div data-testid="shell" className="grid h-full grid-cols-[minmax(0,1fr)] grid-rows-[auto_1fr]">
@@ -192,6 +206,15 @@ export function Shell() {
 							onOpen={() => useAppStore.getState().openSettings(SettingsSection.Updates)}
 						/>
 					) : null}
+					<IconButton
+						variant="ghost"
+						size="m"
+						icon={RiSearchLine}
+						label={t("shell.search.open")}
+						tooltip={t("shell.search.openWithShortcut", { shortcut: searchShortcut })}
+						data-testid="open-search"
+						onClick={() => useAppStore.getState().openSearch()}
+					/>
 					<JbcentralQuotaTopbar />
 					<span
 						data-testid="connection-status"
@@ -237,6 +260,7 @@ export function Shell() {
 				) : null}
 				<SettingsDialog
 					layoutSettings={<LayoutSettings />}
+					keyboardSettings={<SearchSettings />}
 					updateSettings={updates ? <UpdateSettings updates={updates} /> : undefined}
 				/>
 				{newWorkspaceProjectId !== null ? (
@@ -262,13 +286,10 @@ export function Shell() {
 				<SurveyInvitationDialog />
 			)}
 			<SurveyWindow />
-			<SessionSwitcher
-				open={sessionSwitcherOpen}
-				onOpenChange={(open) => {
-					const store = useAppStore.getState();
-					if (open) store.openSessionSwitcher();
-					else store.closeSessionSwitcher();
-				}}
+			<SearchPaletteHost
+				onNewWorkspace={setNewWorkspaceProjectId}
+				onToggleProjectsHome={homeProjects.toggle}
+				hasUpdateSettings={updates !== null}
 			/>
 			<NotificationPermissionPrompt />
 			<Toaster />

@@ -1,6 +1,7 @@
-import { readdirSync, readFileSync, realpathSync } from "node:fs";
+import { type Dirent, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { FileNode, ResourceMeta } from "@thinkrail/contracts";
+import { CodedError } from "@thinkrail/shared/codedError";
 import { loadWorkspaces } from "../persistence";
 import { decodeText, resourceMeta } from "./content";
 
@@ -20,7 +21,9 @@ export function workspaceRelativePath(root: string, path: string): string | null
 }
 
 function isGitMetadataPath(root: string, candidate: string): boolean {
-	return relative(root, candidate).split(sep).includes(".git");
+	return relative(root, candidate)
+		.split(sep)
+		.some((segment) => segment.toLowerCase() === ".git");
 }
 
 function assertExistingAncestorContained(root: string, abs: string): void {
@@ -61,6 +64,22 @@ function resolveInWorktree(
 	return { root, abs };
 }
 
+function entryKind(root: string, dir: string, entry: Dirent): FileNode["kind"] {
+	if (entry.isDirectory()) return "dir";
+	if (!entry.isSymbolicLink()) return "file";
+	try {
+		const target = join(dir, entry.name);
+		if (!statSync(target).isDirectory()) return "file";
+		const realTarget = realpathSync(target);
+		const realDir = realpathSync(dir);
+		return isContained(realpathSync(root), realTarget) && !isContained(realTarget, realDir)
+			? "dir"
+			: "file";
+	} catch {
+		return "file";
+	}
+}
+
 export function readDir(workspaceId: string, path: string): FileNode[] {
 	const { root, abs } = resolveInWorktree(workspaceId, path, true);
 
@@ -70,7 +89,7 @@ export function readDir(workspaceId: string, path: string): FileNode[] {
 			(entry): FileNode => ({
 				path: posixRelative(root, join(abs, entry.name)),
 				name: entry.name,
-				kind: entry.isDirectory() ? "dir" : "file",
+				kind: entryKind(root, abs, entry),
 			}),
 		)
 		.sort((a, b) => (a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === "dir" ? -1 : 1));
@@ -84,6 +103,23 @@ export function readFile(
 	const bytes = readFileSync(abs);
 	const meta = resourceMeta(bytes, path);
 	return { content: meta.text ? decodeText(bytes) : "", meta };
+}
+
+export function pathInfo(
+	workspaceId: string,
+	path: string,
+): { absolutePath: string; kind: "file" | "dir" } {
+	try {
+		const { abs } = resolveInWorktree(workspaceId, path, true);
+		const stat = statSync(abs);
+		if (!stat.isFile() && !stat.isDirectory()) throw new Error("Unsupported filesystem object");
+		return { absolutePath: abs, kind: stat.isDirectory() ? "dir" : "file" };
+	} catch {
+		throw new CodedError(
+			"WORKTREE_PATH_UNAVAILABLE",
+			"The selected workspace path is unavailable or outside the worktree.",
+		);
+	}
 }
 
 export function resolveWorktreeFile(

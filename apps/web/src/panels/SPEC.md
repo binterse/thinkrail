@@ -183,7 +183,8 @@ treatment.
   **`useOpenProject`** hook (reused by `ProjectTree` **and**
   `WelcomePanel`, so the flow is identical in the Projects view and the Welcome screen): `project.open` reactivates
   a closed known path under its same id (or opens a new one), then the initiating client selects Project
-  Home while every client receives `project.updated`; on failure `project.inspect` → either offers to
+  Home while every client receives `project.updated`; on failure (except `GIT_TIMEOUT`, which shows its error at once
+  rather than run the same hung probe again) `project.inspect` → either offers to
   bootstrap the folder into a repo — a modal **`ConfirmDialog`**
   (confirm → `project.init`) — when it's `initable`, or surfaces the error in a **`NoticeDialog`** — so a
   non-git folder is never a silent no-op. The native picker remains the local fast path and keeps its raised
@@ -291,7 +292,17 @@ treatment.
   one child and that child is another directory, and the compact row expands/collapses the deepest
   directory as one unit. `ChangesTree` evaluates this against the changed-file tree; `FileTree` resolves
   only visible compact runs through its existing client-side directory reads, so the wire remains a plain
-  immediate-directory listing. The **`+N −M` diff-count badge** is the shared **`DiffStatBadge`**, used
+  immediate-directory listing. Only **All** file rows contribute host actions to the native Windows
+  WebView2 context menu. The row carries localized labels, availability, a workspace-relative target and
+  two 16px PNG icon variants from the Remix glyphs so Windows can choose a legible icon for its menu
+  text color;
+  Electrobun appends those items to WebView2's existing menu without handling or replacing it, so native
+  entries such as **Granska** remain. Renderers without this native capability keep the existing Radix
+  action menu. The target is the deepest folder represented by a compact run.
+  Selection returns to `FileTree`, which uses the existing validated `fs.pathInfo` / `fs.open` host
+  methods and clipboard helper. Normal click, preview and expansion gestures stay on the row; Changed
+  remains owned by `ChangesPanel` and has no host-action contribution. The wire actions are gated by the
+  advertised file-actions protocol version. The **`+N −M` diff-count badge** is the shared **`DiffStatBadge`**, used
   only inside Changes: the flat list's file rows, the tree's file rows, and a tree folder's aggregate only
   while it is collapsed (an expanded folder's children already show those counts).
   `ChangesTree`'s tree build + `+/−` aggregation + shared status glyphs live in the pure
@@ -640,11 +651,19 @@ a project picker, the prompt hero, and the reused
   siblings); `SettingsGroup` is a titled block of `SettingsRow`s — label, optional description, one
   control, wrapping the control below the label at narrow widths; `SegmentedControl` is a native-radio
   group with `value: T | null` (`null` selects nothing, for a host value no option names) and per-option
-  disabled; `SettingsNotice` is the one inline neutral/info/success/warning/error notice. Free-text
-  settings share one **auto-save input pattern**: Enter or blur saves a valid, changed value once (no
-  Save/Apply button); an invalid draft stays visible with `aria-invalid` and a visible range message and is
-  never sent; Escape reverts to the authoritative value; the input carries `data-settings-draft-input`;
-  a rejected save toasts and the authoritative value stays in charge. **`McpSettings`** is the **MCP servers** section
+  disabled; `SettingsNotice` is the one inline neutral/info/success/warning/error notice;
+  `SettingsSubheading` titles a run of rows inside a group; `SETTINGS_TAG` is the bordered row tag;
+  `SettingsRange` is the range-slider skin and segmented track; `SettingsFolder` is a data folder's
+  Copy path / Open folder row (`useFolderActions` binds a `*.reveal` method) and its per-file issue notices,
+  shared by Language, Custom themes and Custom fonts; `saveSettings` is the one `settings.update` call that
+  toasts its failure. Popovers inside the dialog render into the dialog element
+  (`settingsDialogContainer`), because Radix's scroll lock cancels wheel and touch scrolling anywhere
+  outside it. Free-text settings and the font weight slider share one **auto-save input pattern**
+  (`settingsDraft.useSettingsDraft`): Enter, blur or a slider release saves a valid, changed value once
+  (no Save/Apply button); an invalid draft stays visible with `aria-invalid` and a range message linked by
+  `aria-describedby`, and is never sent; Escape reverts to the authoritative value; the input carries
+  `data-settings-draft-input`; a host echo never overwrites an edit in progress or rolls back to a value a
+  newer in-flight save replaces; a rejected save toasts and the field returns to the authoritative value. **`McpSettings`** is the **MCP servers** section
   (hidden below `MCP_PROTOCOL_VERSION`). It describes the active workspace's project
   (no active workspace → "Open a workspace to manage its MCP servers") and reads `mcp.list` through
   `transport`'s `watchMcpWorkspace` — on mount, every welcome, a project-trust change, and with bounded
@@ -779,7 +798,27 @@ a project picker, the prompt hero, and the reused
   `canApiKey` — **both routes start `provider.loginStart`**
   (`type` `"oauth"` / `"api_key"`, issue #97) into the same store-driven `auth/LoginDialog` (open the
   URL / paste a code / answer the provider's own key prompts, `provider.loginReply` — no inline key
-  field); a "configured outside the app" note for rows with neither flag; and
+  field); a "configured outside the app" note for rows with neither flag; **`CustomEndpointsSettings`**
+  (v101, hidden below `CUSTOM_ENDPOINTS_PROTOCOL_VERSION`; re-read on `providerVersion`) — the **Custom
+  servers** group listing every `customEndpoints.list` endpoint (name, address, model count; **Edit** and a
+  **Remove** icon behind a `ConfirmDialog`) plus **Add server**. The page's **Refresh** reloads the list together with
+  `provider.status`. Providers the group lists are filtered out of the
+  generic provider rows so each appears once (only listed ids: an unlisted `custom-*` provider, or any on
+  a host without the group, stays a generic row); hand-written `models.json` providers stay in Connected as
+  "Managed", not repeated here. The dialog is one form for a company gateway and a local server: name,
+  address with local preset chips (Ollama, LM Studio, vLLM, llama.cpp — they only fill the address and an
+  empty or preset name; there is no server-kind choice), a password key field (blank keeps a saved key on
+  edit; an edit that changes the address's origin shows a warning and disables Save, since a different
+  server is added as a new one; **Remove key** sends `apiKey: ""` and keeps Detect from reusing it), **Find models**
+  (`customEndpoints.probe`, run automatically when an edit opens), a per-model use switch, and a manual
+  model-id field for gateways that list nothing. **A model row has no editable parameters** (decision: they
+  describe the server rather than configure it — its real limits are set by whoever runs it). It shows only
+  the facts the server reported (context, thinking, images, tools; "No tools" in warning tone), and an
+  unreported fact is simply absent and left to pi's default. Re-detecting keeps selections and saved
+  facts the server doesn't report, takes reported ones, drops a saved max output once a new context is
+  reported, and keeps models the server no longer lists; an unchanged saved address stays as written. The
+  pure draft rules live in `customEndpointDraft`; probe failures render as localized inline status and
+  host save errors render inline; and
   the **`JetBrainsAiCard`** — route Central-supported models through the user's JetBrains subscription while
   keeping ThinkRail's embedded PI — a state machine over the typed `JbcentralStatus` +
   `provider.jbcentral*`: absent (official host-OS install guidance + Recheck), outdated — below the host's
@@ -860,7 +899,40 @@ a project picker, the prompt hero, and the reused
   `USER_THEMES_PROTOCOL_VERSION`) gives the copy-a-bundled-file steps with a version-pinned link to
   `dark.theme.json`, the `<dataDir>/themes` folder with **Copy path** / **Open folder** (`themes.reveal`),
   and one warning notice per unusable file (`themes`' issue list). The page reads the catalog and issues
-  through `onThemesChange`, so a dropped file appears in the lists without reopening. An **Editor** group hosts the file
+  through `onThemesChange`, so a dropped file appears in the lists without reopening. From
+  `FONTS_PROTOCOL_VERSION` two groups sit between the theme group and Custom themes ([[submodule-web-fonts]]
+  applies what they save). **Fonts** (`FontsSettings.tsx`) opens with an inert preview on the chat canvas —
+  a chat message in the chat prose system, buttons, an editor sample in `.tr-code-editor` and a terminal
+  sample in `.tr-code-block` — then an **Interface** sub-heading (Font picker; **Text weight** slider, which
+  shifts code weights too, offset −70…+130 in steps of 10, previewed through the fonts runtime while it
+  drags and saved once on release; when a chosen named family
+  does not change between the range's ends on this device — a static face with only regular and bold — an
+  info notice under the slider says so and points at variable fonts, and one that changes only one way says
+  it moves in steps) and a **Code** sub-heading
+  (Font picker listing monospaced fonts only; **Size**, 10–24 on the auto-save input pattern with − / +;
+  **Ligatures**), and an **Advanced** disclosure with Interface and Code **fallback fonts** as chips added
+  through the same picker. A row whose value differs from its default carries a reset button named for its
+  setting. The props-driven picker (`FontPicker.tsx`) groups Built-in / Custom / Installed, draws each name
+  in its own face through `FamilyName` (typography's one token exception: picker rows, the trigger label,
+  fallback chips and the Custom fonts family list), badges Default / Mono / Not on this device, asks the
+  host for `fonts.installed` on every open — keeping the last list while it re-reads, and through a failed
+  re-read, and dropping a stale answer; a skeleton and a warning with Retry show only until a first list
+  arrives — and offers a
+  typed name that matches nothing as **Use “X”**; merging, shadowing and the monospace/renders filters are
+  the pure `fontCatalog.ts`. A named family that does not render on this device puts a warning icon on the
+  trigger and a notice under the row while the choice is kept. Choices go through `settings.update` and
+  converge on `settings.changed`; one role's choice saves at a time, its picker, chips and reset disabled
+  until it lands. **Custom fonts**
+  (`CustomFontsSettings.tsx`) holds the drop zone with **Choose files…** (each file a `PUT /fonts/<name>`
+  through `transport`'s `uploadUserFont`; outcomes land in one polite live region, and overlapping drops
+  add to the same list), the custom families with Mono / In use
+  badges, the `<dataDir>/fonts` folder row with Copy path / Open folder (`fonts.reveal`) and the rule that
+  fonts are removed in the folder, and one warning per unusable file. `SettingsDisclosure` is the shared
+  collapsible row both pages use. Fonts live on Appearance, one page with the theme, because a page of their
+  own added a nav item and in-page tabs a pattern Settings does not have; fallback fonts are picked through
+  the same list, never typed, after a free-text CSS stack proved unclear in review. Whether an OS file drop
+  reaches the page in WKWebView, WebKitGTK and WebView2 is unconfirmed; **Choose files…** is the path that
+  never depends on it. An **Editor** group hosts the file
   `LineWidthControl`); **`LineWidthControl({kind})`** (`LineWidthSettings.tsx`, no page of its own — the
   `chat` control sits in Chat, the `file` one in Appearance → Editor — a 40–240 integer **Line width** field
   on the auto-save input pattern plus an independent host-synchronized **Fit to pane** switch
@@ -1838,10 +1910,13 @@ own section. The kebab menu (`plan-menu`, a
   replaces the workspace's comment list, and rebuilding each open file's threads from it handed every mounted
   renderer a new `review`. Monaco, which the compiler skips, re-rendered twice for one comment on another
   file (`e2e/perf/reviewThreadIsolation.perf.ts` pins it at zero). The pair, the hook and
-  `SendReviewButton` take an optional chat session id: without it a send targets the last open chat (else
-  the file's pinned review chat); with it — a file shown in a chat tool card, whose `ResourcePreview` reads
-  the chat's scope — the host's explicit `sessionId` wins over the pinned chat, so feedback lands in the chat
-  that showed the file. The shell's `AppResourceHost` exposes exactly these (bound per call) as the
+  `SendReviewButton` take an optional chat session id: without it the host routes each file to its pinned
+  review chat, creating one on its first send. Open tabs never supply an implicit override: a sidebar or
+  file-pane send must not move an existing discussion into an unrelated chat, and Send all must preserve
+  per-file routing. With an explicit id — a file shown in a chat tool card, whose `ResourcePreview` reads
+  the chat's scope — that `sessionId` wins over the pinned chat, so feedback lands in the chat that showed
+  the file. This does not infer file authorship from turn snapshots, which cover the whole workspace's
+  interval rather than exclusive writes. The shell's `AppResourceHost` exposes exactly these (bound per call) as the
   renderers' `FileReview` / `ReviewSend` host capabilities.
   A batch answers with EVERY session it touched (one per group), so a multi-file batch opens every chat
   it started and focuses the first — a chat the user never saw would still be an agent working on their
@@ -1868,8 +1943,13 @@ own section. The kebab menu (`plan-menu`, a
   (workspace change, that workspace's `fsChangesByWorkspace` tick, a **`readKey`** change, or `reload()` for a manual Refresh) while
   the caller owns *what to do* with the outcome (`onResult` / `onFailure` / `onSwitch`). Centralized because
   each site was otherwise re-implementing the **stale-response guard**: an answer in flight when the caller
-  moves on must not land in the new workspace's view (reads are generation-stamped — latest wins, abandoned
-  ones stay silent). A `null` workspaceId reads nothing, which is also how a component expresses a
+  moves on must not land in the new workspace's view. Reads are **single-flight** (`createSingleFlight`,
+  unit-tested): one read in flight per mount, and ticks or `reload()` that arrive during it fold into one
+  follow-up with the latest inputs. Each tick otherwise started its own request, and a slow host (a stalled
+  `git`) let them pile up until the transport's per-client replay cap refused every request. A read whose
+  identity (workspace, `readKey`) is unchanged still delivers its result or failure even with a follow-up
+  queued; dropping it would starve the view whenever ticks arrive faster than the read. An identity change
+  or unmount silences it. A `null` workspaceId reads nothing, which is also how a component expresses a
   *paused* read. A visible `FileTree` directory probes while collapsed only as far as needed to identify
   its compact single-directory run; descendants below the run's deepest directory mount and read only
   when that compact row is expanded. No tick has to be threaded down as a prop.
@@ -1929,7 +2009,15 @@ own section. The kebab menu (`plan-menu`, a
   older read lands last and overwrites the newer target's content while carrying its own honest — but now
   stale — stamp, so neither effect sees any drift and the pane keeps the old target's diff under the new
   target's label indefinitely. Dropping the superseded read costs nothing: the read that superseded it is
-  the one the user is waiting for. Panels are mounted only for the active workspace,
+  the one the user is waiting for. Tick reads are single-flight per tab: a tick that lands while the
+  same path is being read waits, the read applies at the tick it started for, and a newer tick re-reads once
+  after it settles. A read superseded before it applied (a remount, `reload()`, or a re-point) also
+  re-checks the tick, so the tab never stays below it with nothing in flight. `reload()` is a tracked
+  read too: it supersedes the tick read, makes later ticks wait, and applies at the workspace tick it
+  started at. Stamping the tick at settle time would mark content read before a waiting tick as current,
+  and the tab would stay stale. The read logic lives in `createTabReader`, unit-tested without React. Cancelling the slow read on every tick kept `loadedTick` from ever advancing, so each
+  tick refetched. The re-point read takes the tick from the tab when it settles, so a tick landing mid-read
+  does not cancel it. Panels are mounted only for the active workspace,
   so scoping is natural. A degraded host watcher pauses automatic invalidations until the next workspace
   read re-establishes it; editable-file conflict handling waits for `fs.writeFile` (the viewer is read-only today).
 - **`useWorkspaceSpecs` owns the `spec.graph` read** (one fetcher, one definition of "this file is a spec"):
@@ -2084,6 +2172,9 @@ own section. The kebab menu (`plan-menu`, a
   viewed files carry a check glyph, and clicking a row reveals that section (and expands it if it was
   collapsed) — the reveal remains anchored by path while asynchronous sections determine their heights,
   until a view-mode change or user wheel, touch, pointer, or keyboard input takes over. A timeout cannot bound remote reads.
+  Virtuoso re-issues a `scrollToIndex` for as long as item sizes keep changing, so the list's scroller
+  applies `scrollTo` only while a reveal is settling; otherwise a late-loading section would scroll a wheel
+  or a focused composer straight back to the revealed file.
   Finding navigation hands scrolling to the thread only after the section reveal, and disables further
   header corrections so the thread cannot be scrolled back out of view. The pane brings the **section**
   into view; the within-section reveal of a **comment** is a `reviewFocusRequest` that
@@ -2307,8 +2398,9 @@ own section. The kebab menu (`plan-menu`, a
   context, which our per-worktree terminal churn would hit). Addons are exactly `fit`, `clipboard`,
   `unicode11` and `web-fonts`; anything else pinned but unimported is dead weight and a trap for the next
   reader. `web-fonts` is load-bearing rather than cosmetic: our code font ships as per-alphabet woff2 subsets,
-  so the Cyrillic/CJK file lands *after* xterm has measured the character cell (which it does once, at
-  construction, and never again — unlike Monaco, which re-measures an untrusted early reading). Without the
+  so the Cyrillic/CJK file lands *after* xterm has measured the character cell (which it does at
+  construction and again only when a font option changes — unlike Monaco, which re-measures an untrusted
+  early reading). Without the
   re-measure, non-Latin glyphs render into cells sized for the fallback font and the PTY holds the wrong
   cols/rows. Initial attach therefore waits for `relayout()`, performs a final `fit()`, and only then captures
   the PTY grid. The wait is **bounded by a deadline**, because `relayout()` in the pinned addon awaits
@@ -2317,6 +2409,16 @@ own section. The kebab menu (`plan-menu`, a
   Relayout failure or deadline expiry falls back to the construction-time measurement rather than stranding
   the pane; on expiry the stale relayout is neutralized first (disposing the addon skips its re-measuring
   `fontFamily` toggle), so a font that finishes loading late cannot re-lay-out an already-attached terminal.
+  A **font settings change** is the one later re-measure: through `@thinkrail/ui/fonts`' `watchFont` the
+  terminal resolves the generated `.tr-code-block` style (family, code size, weight), waits for that face to
+  load, sets the three options and re-fits, which resyncs the PTY grid. Only the latest change applies; one
+  that leaves family, size and weight alone is skipped unless the custom face set changed (a replaced file
+  keeps its family name but not its metrics), and a ligatures-only change never re-measures. Each apply sets
+  `fontFamily` to `monospace` and back, because xterm re-measures its cell only when that option's value
+  changes. The relayout start callback applies the latest resolved font before its first fit, so a change
+  that lands while the initial relayout is pending is not lost. It never draws ligatures: the DOM renderer merges a run of
+  same-styled cells into one text node, so `index.css` pins `.xterm .xterm-rows` to
+  `font-variant-ligatures: none` whatever the Ligatures switch says.
   This ordering also prevents a fallback-width attach followed by a corrective resize from producing
   post-snapshot shell redraws that can erase replayed rows. Its pre-bind output buffer is a bounded waiting
   state: successful bind filters it to the adopted PTY, while creation failure clears it and stops accepting

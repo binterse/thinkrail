@@ -2,7 +2,13 @@ import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { channel, version } from "@thinkrail/shared/version";
 import { windowsFileIdentity, windowsIconPath } from "@thinkrail/shared/windowsIdentity";
+import { installPinnedNativeWrapper } from "./src/pinnedNativeWrapper";
 import { brandWindowsExecutable } from "./src/windowsExecutableIdentity";
+
+const WEBVIEW2_CONTEXT_MENU_WRAPPER = {
+	url: "https://github.com/binterse/electrobun/releases/download/v2.0.6-thinkrail-context-menu.4/libNativeWrapper.dll",
+	sha256: "208ad07fcfbe24a85024cee01933fcc2a8c975b242d9bc1cfc7a66b0bb5347f0",
+};
 
 const desktopDir = import.meta.dir;
 
@@ -16,6 +22,10 @@ if (process.env.ELECTROBUN_OS === "win") {
 
 	const bundleName = buildEnvironment === "stable" ? appName : `${appName}-${buildEnvironment}`;
 	const bundleDir = join(buildDir, bundleName);
+	await installPinnedNativeWrapper(
+		join(bundleDir, "bin", "libNativeWrapper.dll"),
+		WEBVIEW2_CONTEXT_MENU_WRAPPER,
+	);
 	const icon = readFileSync(windowsIconPath);
 	const identity = windowsFileIdentity({ version, channel });
 	for (const [path, originalFilename] of [

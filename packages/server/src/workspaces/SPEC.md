@@ -34,7 +34,8 @@ place as `kind: "external"` — outside the data dir, never created or mutated h
   the Git registry at the mutation door, comparing canonicalized paths; same-project retries are
   idempotent, cross-project cwd reuse is rejected; persist + emit `created` with `kind: "external"`, a
   directory-basename display name, `renamed: true`, and the repo default as its initial review target —
-  **no Git or checkout mutation**), `createWorkspace` (**async**; off `baseRef` when given — branched with `worktree add -b`, never a detached
+  **no Git or checkout mutation**), `createWorkspace` (**async**; off `baseRef` when given — branched with `worktree add -b` (no deadline: a large
+  checkout legitimately runs long; `renameWorkspace`'s `branch -m` is the other sync git call without one), never a detached
   remote checkout, and **`--no-track`**: a remote-tracking base would otherwise become the new branch's
   upstream (git's `autoSetupMerge` default), aiming the workspace terminal's `git push`/`git pull` at the
   *base* branch — the workspace branch's upstream is the user's to set on first push, never ours;
@@ -142,11 +143,12 @@ place as `kind: "external"` — outside the data dir, never created or mutated h
   and the **archive** primitives, split so the fast record-drop
   and the slow git reclaim are separable (the host archives off the request's critical path):
   `forgetWorkspace(id)` (drop the persistence record, return the removed record or `null` — gone from
-  `listWorkspaces` immediately), `reclaimWorktree(ws)` (the slow half — `git worktree remove --force`,
-  keeps the branch; hardened: rm + `prune` if git fails; **refuses both user-owned kinds and,
+  `listWorkspaces` immediately), `reclaimWorktree(ws)` (the async slow half — `git worktree remove --force`,
+  keeps the branch; asynchronous rm + `prune` if git fails, so reclamation never blocks the host's event
+  loop; **refuses both user-owned kinds and,
   defense-in-depth, any record whose `worktreePath` resolves to the project folder** — the rm-fallback must
   never see the user's repo or an attached checkout, however a corrupt/hand-edited record got there), and
-  `removeWorkspace(id)` (the synchronous composition of the two, kept for callers/tests that want the whole
+  `removeWorkspace(id)` (the awaited composition of the two, kept for callers/tests that want the whole
   archive in one call).
 - **Default workspace (`kind: "default"`):** exactly one per project. `listWorkspaces` **ensures** it
   — find-or-create by `projectId`+`kind` (id a plain `randomUUID`; the `kind` field is the marker,
@@ -167,7 +169,10 @@ place as `kind: "external"` — outside the data dir, never created or mutated h
   any workspace, degenerating to uncommitted work when the folder sits on the default branch itself.
   Drift is **not** only a list-time discovery: `refreshUserOwnedWorkspace(workspaceId)` is the same
   re-sync **without** the diff-stat listing (an external workspace re-syncs only its `branch`, and an
-  unreadable checkout is never persisted as a fake detached `HEAD`; unknown id / a managed workspace /
+  unreadable checkout is never persisted as a fake detached `HEAD`; nor is a git that timed out — a
+  timeout is no answer, so the stored fields stay and only a warning is logged — unless the caller passes
+  `{ strict: true }`, which rethrows instead (the `pr` push/PR/branch-action guards, which must not
+  validate against a stale stored branch) — and an existing Default is returned as stored for the same reason; unknown id / a managed workspace /
   no drift → no save, no emit), which the host wires to `watch`'s **repo-metadata nudge** (host-mediated,
   `watch` has no `workspaces` edge — see [[submodule-server-watch]]). So a `git switch` in the Default
   workspace's terminal converges the rail, the top bar and the empty receipt live, instead of leaving

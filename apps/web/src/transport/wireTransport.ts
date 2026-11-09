@@ -16,10 +16,13 @@ import type {
 	Workspace,
 	WorkspaceFsChangedPayload,
 	WorkspaceRemoved,
+	WsParams,
+	WsResult,
 } from "@thinkrail/contracts";
 import {
 	CHANGE_MUTATIONS_PROTOCOL_VERSION,
 	FEEDBACK_SURVEY_PROTOCOL_VERSION,
+	FONTS_PROTOCOL_VERSION,
 	HOST_UPDATE_RUN_PROTOCOL_VERSION,
 	LOCALES_PROTOCOL_VERSION,
 	PI_PACKAGES_PROTOCOL_VERSION,
@@ -34,6 +37,7 @@ import {
 } from "@thinkrail/contracts";
 import { currentLocale } from "@thinkrail/locales/react";
 import { isConnectedGeneration, useAppStore } from "../store";
+import { githubStarToast } from "./githubStar";
 import { createPiEventBatcher, shouldFlushPiEventsBefore } from "./piEventBatcher";
 import { WsTransport } from "./transport";
 
@@ -49,6 +53,10 @@ export function supportsUserThemes(protocolVersion: number | null): boolean {
 
 export function supportsPiPackages(protocolVersion: number | null): boolean {
 	return protocolVersion !== null && protocolVersion >= PI_PACKAGES_PROTOCOL_VERSION;
+}
+
+export function supportsFonts(protocolVersion: number | null): boolean {
+	return protocolVersion !== null && protocolVersion >= FONTS_PROTOCOL_VERSION;
 }
 
 export function supportsToolResponses(protocolVersion: number | null): boolean {
@@ -165,50 +173,101 @@ function hydrateSessionStates(connectionGeneration: number): void {
 	attempt();
 }
 
-function refreshLocalLocales(connectionGeneration: number): void {
+type FolderSnapshotMethod = "locales.list" | "themes.list" | "fonts.list";
+
+function refreshFolderSnapshot<M extends FolderSnapshotMethod>(
+	method: M,
+	params: WsParams<M>,
+	minProtocolVersion: number,
+	install: (store: ReturnType<typeof useAppStore.getState>, snapshot: WsResult<M> | null) => void,
+	connectionGeneration: number,
+): void {
 	const store = useAppStore.getState();
-	if (store.protocolVersion === null || store.protocolVersion < LOCALES_PROTOCOL_VERSION) {
-		store.installLocalLocales(null);
+	if (store.protocolVersion === null || store.protocolVersion < minProtocolVersion) {
+		install(store, null);
 		return;
 	}
 	void getTransport()
-		.request("locales.list", {})
+		.request(method, params)
 		.then((snapshot) => {
 			const current = useAppStore.getState();
-			if (isConnectedGeneration(current, connectionGeneration))
-				current.installLocalLocales(snapshot);
+			if (isConnectedGeneration(current, connectionGeneration)) install(current, snapshot);
 		})
 		.catch(() => {});
 }
 
+function refreshLocalLocales(connectionGeneration: number): void {
+	refreshFolderSnapshot(
+		"locales.list",
+		{},
+		LOCALES_PROTOCOL_VERSION,
+		(store, snapshot) => store.installLocalLocales(snapshot),
+		connectionGeneration,
+	);
+}
+
 function refreshUserThemes(connectionGeneration: number): void {
-	const store = useAppStore.getState();
-	if (!supportsUserThemes(store.protocolVersion)) {
-		store.installUserThemes(null);
-		return;
-	}
-	void getTransport()
-		.request("themes.list", {})
-		.then((snapshot) => {
-			const current = useAppStore.getState();
-			if (isConnectedGeneration(current, connectionGeneration)) current.installUserThemes(snapshot);
-		})
-		.catch(() => {});
+	refreshFolderSnapshot(
+		"themes.list",
+		{},
+		USER_THEMES_PROTOCOL_VERSION,
+		(store, snapshot) => store.installUserThemes(snapshot),
+		connectionGeneration,
+	);
+}
+
+function refreshUserFonts(connectionGeneration: number): void {
+	refreshFolderSnapshot(
+		"fonts.list",
+		{},
+		FONTS_PROTOCOL_VERSION,
+		(store, snapshot) => store.installUserFonts(snapshot),
+		connectionGeneration,
+	);
 }
 
 function refreshLoadedWorkspaceLists(connectionGeneration: number): void {
 	const snapshot = useAppStore.getState();
 	const openProjectIds = new Set(snapshot.projects.map((project) => project.id));
-	for (const projectId of Object.keys(snapshot.workspaces)) {
+	for (const [projectId, held] of Object.entries(snapshot.workspaces)) {
 		if (!openProjectIds.has(projectId)) continue;
+		const heldAtRequest = held.map((workspace) => workspace.id);
 		void getTransport()
 			.request("workspace.list", { projectId, includeDiffStats: false })
 			.then((workspaces) => {
 				const current = useAppStore.getState();
 				if (!isConnectedGeneration(current, connectionGeneration)) return;
-				if (!current.projects.some((project) => project.id === projectId)) return;
-				for (const workspace of workspaces) current.updateWorkspace(workspace);
+				applyWorkspaceListRefresh(projectId, heldAtRequest, workspaces);
 			})
+			.catch(() => {});
+	}
+}
+
+export function applyWorkspaceListRefresh(
+	projectId: string,
+	heldAtRequest: readonly string[],
+	workspaces: readonly Workspace[],
+): void {
+	const store = useAppStore.getState();
+	if (!store.projects.some((project) => project.id === projectId)) return;
+	for (const workspace of workspaces) store.updateWorkspace(workspace);
+	const listed = new Set(workspaces.map((workspace) => workspace.id));
+	for (const workspaceId of heldAtRequest) {
+		if (listed.has(workspaceId)) continue;
+		const held = useAppStore.getState().workspaces[projectId];
+		if (held?.some((workspace) => workspace.id === workspaceId)) {
+			retireWorkspace(projectId, workspaceId);
+		}
+	}
+}
+
+export function retireWorkspace(projectId: string, workspaceId: string): void {
+	const state = useAppStore.getState();
+	const login = state.activeLogin;
+	state.applyWorkspaceRemoved(projectId, workspaceId);
+	if (login?.target?.workspaceId === workspaceId) {
+		void getTransport()
+			.request("provider.loginCancel", { loginId: login.loginId })
 			.catch(() => {});
 	}
 }
@@ -256,6 +315,7 @@ export function initTransport(): WsTransport {
 		refreshLoadedWorkspaceLists(connectionGeneration);
 		refreshLocalLocales(connectionGeneration);
 		refreshUserThemes(connectionGeneration);
+		refreshUserFonts(connectionGeneration);
 		if (welcome.protocolVersion >= SESSION_STATE_PROTOCOL_VERSION) {
 			hydrateSessionStates(connectionGeneration);
 		} else {
@@ -352,10 +412,18 @@ export function initTransport(): WsTransport {
 		useAppStore.getState().bumpPackagesVersion();
 	});
 
+	transport.subscribe(WS_CHANNELS.fontsChanged, () => {
+		refreshUserFonts(useAppStore.getState().connectionGeneration);
+	});
+
 	transport.subscribe(WS_CHANNELS.feedbackInterview, () => {
 		const state = useAppStore.getState();
 		if ((state.protocolVersion ?? 0) < FEEDBACK_SURVEY_PROTOCOL_VERSION) return;
 		state.showSurveyInvitation();
+	});
+
+	transport.subscribe(WS_CHANNELS.feedbackGithubStar, (data) => {
+		useAppStore.getState().pushToast(githubStarToast(data));
 	});
 
 	transport.subscribe(WS_CHANNELS.workspaceCreated, (data) => {
@@ -376,14 +444,7 @@ export function initTransport(): WsTransport {
 
 	transport.subscribe(WS_CHANNELS.workspaceRemoved, (data) => {
 		const { projectId, id } = data as WorkspaceRemoved;
-		const state = useAppStore.getState();
-		const login = state.activeLogin;
-		state.applyWorkspaceRemoved(projectId, id);
-		if (login?.target?.workspaceId === id) {
-			void getTransport()
-				.request("provider.loginCancel", { loginId: login.loginId })
-				.catch(() => {});
-		}
+		retireWorkspace(projectId, id);
 	});
 
 	transport.subscribe(WS_CHANNELS.reviewChanged, (data) => {

@@ -15,7 +15,7 @@ effort defaults, terminal replay budget and Windows shell preference, chat compo
 visual line widths plus independent pane bounds, bounded custom layout-preset catalog, JetBrains quota
 display/cadence, the host-wide subagent default, plan-review policy, the host-registry extensions the
 user turned off, and the UI language preference (`locale`). `defaultModel` / `defaultEffort`
-select the defaults every new chat receives (unset model means the preferred available model — pi's provider default, else the first; unset effort means medium);
+select the defaults every new chat receives (unset model means pi's `settings.json` default when available, else the preferred available model — pi's provider default, else the first; unset effort means medium);
 `reviewModel` / `reviewEffort`
 select the reviewer runtime (unset means that same new-chat default); `reviewAutoFix: false` records a `request_changes`
 verdict and waits instead of auto-sending a fix. **`favoriteModels`** is the picker's starred list in display
@@ -40,7 +40,7 @@ interval (`1–3600`, default 30), because those values govern host process cade
 - `settleIdleDays` — the Settled-shelf idle window: a positive integer number of days (clamped to 1…365) or
   `null` for never; default `7`. Validated like every other known field; a hand-edited non-number falls
   back to the default rather than disabling settling.
-- **Owns:** cached current `AppConfig`; `getConfig()`; `updateConfig(partial)` (reject a non-object or unknown key → merge → validate known fields → persist → publish the merged `AppConfig` and successful applied `AppConfigUpdate`); line-width and resource-free custom-preset validation/normalization; custom-preset safety caps; `setSettingsPublisher`; and `resetConfigCache` for tests.
+- **Owns:** cached current `AppConfig`; `getConfig()`; `updateConfig(partial)` (reject a non-object or unknown key → merge → validate known fields → persist → publish the merged `AppConfig` and successful applied `AppConfigUpdate`); the font settings' shape (`interfaceFont` / `codeFont` through `isFontChoice`, `codeFontSize`, `codeLigatures`, `fontWeightOffset`), each normalized back to its own default on load — which family a choice names, and whether it renders, is the client's; line-width and resource-free custom-preset validation/normalization; custom-preset safety caps; `setSettingsPublisher`; and `resetConfigCache` for tests.
 - **Public surface (barrel):** `getConfig`, `updateConfig`, `noteRecentModel`, `setSettingsPublisher`, `SettingsPublisher`, `resetConfigCache`, plus pure custom-preset normalization used by host startup after persistence load.
 - **Allowed deps:** `persistence` (`loadConfig`/`saveConfig`); `contracts` (`AppConfig`, `LayoutPreset`,
   `isTerminalWindowsShell`).
