@@ -212,7 +212,7 @@ interface Entry {
 	queuedMessages: Record<QueueLane, TrackedQueuedMessage[]>;
 	pendingFollowUpAdmissions: Map<number, TrackedQueuedMessage>;
 	acceptedFollowUpAdmissions: Set<number>;
-	followUpAdmission: Promise<void>;
+	promptAdmission: Promise<void>;
 	nextQueuedMessageId: number;
 	hostMessages: PendingHostMessage[];
 	manualCompactionInProgress: boolean;
@@ -1247,7 +1247,7 @@ async function prepareSessionEntry(
 		queuedMessages: { steering: [], followUp: [] },
 		pendingFollowUpAdmissions: new Map(),
 		acceptedFollowUpAdmissions: new Set(),
-		followUpAdmission: Promise.resolve(),
+		promptAdmission: Promise.resolve(),
 		nextQueuedMessageId: 1,
 		hostMessages: [],
 		manualCompactionInProgress: false,
@@ -2464,6 +2464,7 @@ interface FollowUpHandoff {
 interface ScheduledPromptPreflight {
 	current: () => boolean;
 	inputChecked: boolean;
+	skipInputHandlers?: boolean;
 }
 
 const scheduledPromptPreflight = new AsyncLocalStorage<ScheduledPromptPreflight>();
@@ -2473,11 +2474,23 @@ function installScheduledPromptPreflight(entry: Entry): () => void {
 	const originalHasHandlers = runner.hasHandlers;
 	const originalEmitInput = runner.emitInput;
 	const emitInput = originalEmitInput.bind(runner);
-	const guardedHasHandlers: typeof runner.hasHandlers = (eventType) =>
-		originalHasHandlers.call(runner, eventType) ||
-		(eventType === "input" && scheduledPromptPreflight.getStore()?.inputChecked === false);
+	const guardedHasHandlers: typeof runner.hasHandlers = (eventType) => {
+		const guard = scheduledPromptPreflight.getStore();
+		return (
+			originalHasHandlers.call(runner, eventType) ||
+			(eventType === "input" && guard?.inputChecked === false)
+		);
+	};
 	const guardedEmitInput: typeof runner.emitInput = async (...args) => {
 		const guard = scheduledPromptPreflight.getStore();
+		if (guard?.skipInputHandlers && !guard.inputChecked && args[2] === "interactive") {
+			guard.inputChecked = true;
+			return {
+				action: "transform",
+				text: args[0],
+				...(args[1] ? { images: args[1] } : {}),
+			};
+		}
 		const scheduledInput = guard !== undefined && !guard.inputChecked && args[2] === "interactive";
 		if (scheduledInput) guard.inputChecked = true;
 		const result = await emitInput(...args);
@@ -2533,9 +2546,11 @@ async function handOffFollowUp(
 	modelSelection: PromptModelSelection | undefined,
 	rejectHandled = false,
 	isCurrent?: () => boolean,
+	skipInputHandlers = false,
 ): Promise<FollowUpHandoff> {
 	const release = admitPreflight(entry);
-	const restorePreflight = rejectHandled ? installScheduledPromptPreflight(entry) : () => {};
+	const restorePreflight =
+		rejectHandled || skipInputHandlers ? installScheduledPromptPreflight(entry) : () => {};
 	const wasStreaming = entry.session.isStreaming;
 	const tracked: TrackedQueuedMessage = {
 		...(modelSelection ? { modelSelection } : {}),
@@ -2619,9 +2634,14 @@ async function handOffFollowUp(
 					preflightResult,
 				};
 				run =
-					rejectHandled && isCurrent
-						? scheduledPromptPreflight.run({ current: isCurrent, inputChecked: false }, () =>
-								entry.session.prompt(text, promptOptions),
+					rejectHandled || skipInputHandlers
+						? scheduledPromptPreflight.run(
+								{
+									current: isCurrent ?? (() => true),
+									inputChecked: false,
+									...(skipInputHandlers ? { skipInputHandlers: true } : {}),
+								},
+								() => entry.session.prompt(text, promptOptions),
 							)
 						: entry.session.prompt(text, promptOptions);
 			} catch (error) {
@@ -2654,10 +2674,10 @@ async function handOffFollowUp(
 	}
 }
 
-async function withFollowUpAdmission<T>(entry: Entry, operation: () => Promise<T>): Promise<T> {
-	const previous = entry.followUpAdmission;
+async function withPromptAdmission<T>(entry: Entry, operation: () => Promise<T>): Promise<T> {
+	const previous = entry.promptAdmission;
 	let release!: () => void;
-	entry.followUpAdmission = new Promise<void>((resolve) => (release = resolve));
+	entry.promptAdmission = new Promise<void>((resolve) => (release = resolve));
 	await previous;
 	try {
 		return await operation();
@@ -2688,35 +2708,75 @@ export async function promptSession(
 	const entry = mustGetEntry(sessionId);
 	const { modelSelection } = opts;
 	if (modelSelection) validatePromptModelSelection(sessionId, modelSelection);
-	if (entry.session.isStreaming && modelSelection) {
-		await followUpEntry(entry, text, images, true, modelSelection);
-		return;
-	}
-	admitRun(entry);
-	if (entry.session.isStreaming) {
-		await steerEntry(entry, text, images);
-		return;
-	}
-	const clearStagedSelection = stagePromptModelSelection(entry, modelSelection);
-	const release = admitPreflight(entry);
+	const admission = await withPromptAdmission(entry, async () => {
+		admitRun(entry);
+		if (entry.session.isStreaming) {
+			if (modelSelection) {
+				const handoff = await handOffFollowUp(entry, text, images, true, modelSelection);
+				return {
+					disposition: handoff.disposition,
+					...(handoff.disposition === "started" ? { run: handoff.run } : {}),
+				};
+			}
+			await steerEntry(entry, text, images);
+			return { disposition: "queued" as const };
+		}
+
+		const clearStagedSelection = stagePromptModelSelection(entry, modelSelection);
+		const releasePreflight = admitPreflight(entry);
+		let resolveAdmission!: (disposition: "handled" | "queued" | "started") => void;
+		let rejectAdmission!: (error: unknown) => void;
+		const accepted = new Promise<"handled" | "queued" | "started">((resolve, reject) => {
+			resolveAdmission = resolve;
+			rejectAdmission = reject;
+		});
+		let run: Promise<void>;
+		try {
+			run = entry.session.prompt(
+				text,
+				answeringDialogs(entry, images, (disposition) => {
+					opts.onPreflight?.();
+					resolveAdmission(disposition);
+				}),
+			);
+		} catch (error) {
+			clearStagedSelection();
+			releasePreflight();
+			throw error;
+		}
+		void run.then(
+			() => rejectAdmission(new Error("Prompt completed without an admission result.")),
+			rejectAdmission,
+		);
+		try {
+			const disposition = await accepted;
+			if (disposition !== "started") clearStagedSelection();
+			return { disposition, run, clearStagedSelection, releasePreflight };
+		} catch (error) {
+			clearStagedSelection();
+			releasePreflight();
+			throw error;
+		}
+	});
+
 	try {
-		await entry.session.prompt(text, answeringDialogs(entry, images, opts.onPreflight));
+		if (admission.disposition === "started" && admission.run) await admission.run;
 	} finally {
-		clearStagedSelection();
-		release();
+		admission.clearStagedSelection?.();
+		admission.releasePreflight?.();
 	}
 }
 
 function answeringDialogs(
 	entry: Entry,
 	images: ImageContent[] | undefined,
-	onPreflight?: () => void,
+	onPreflight?: NonNullable<PromptOptions["preflightResult"]>,
 ): PromptOptions {
 	return {
 		...(images ? { images } : {}),
 		preflightResult: (disposition) => {
 			if (disposition !== "handled") cancelExtUiForSession(entry.session.sessionId);
-			onPreflight?.();
+			onPreflight?.(disposition);
 		},
 	};
 }
@@ -2770,7 +2830,7 @@ export async function acceptScheduledFollowUpSession(
 ): Promise<boolean> {
 	if (modelSelection) validatePromptModelSelection(sessionId, modelSelection);
 	const entry = mustGetEntry(sessionId);
-	return withFollowUpAdmission(entry, async () => {
+	return withPromptAdmission(entry, async () => {
 		if (!isCurrent()) return false;
 		assertScheduledPromptCanDeliver(entry);
 		const canDeliver = () =>
@@ -2794,9 +2854,19 @@ async function followUpEntry(
 	images: ImageContent[] | undefined,
 	answersDialogs: boolean,
 	modelSelection?: PromptModelSelection,
+	alreadyAccepted = false,
 ): Promise<void> {
-	const handoff = await withFollowUpAdmission(entry, () =>
-		handOffFollowUp(entry, text, images, answersDialogs, modelSelection),
+	const handoff = await withPromptAdmission(entry, () =>
+		handOffFollowUp(
+			entry,
+			text,
+			images,
+			answersDialogs,
+			modelSelection,
+			false,
+			undefined,
+			alreadyAccepted,
+		),
 	);
 	if (!handoff.wasStreaming && handoff.disposition === "started") await handoff.run;
 }
@@ -2985,6 +3055,7 @@ export async function removeQueuedSession(
 				item.message.images ? [...item.message.images] : undefined,
 				false,
 				item.message.modelSelection,
+				true,
 			);
 		}
 		if (!session.isStreaming && session.pendingMessageCount > 0) {
@@ -2996,6 +3067,7 @@ export async function removeQueuedSession(
 					message.images ? [...message.images] : undefined,
 					false,
 					message.modelSelection,
+					true,
 				);
 			}
 		}

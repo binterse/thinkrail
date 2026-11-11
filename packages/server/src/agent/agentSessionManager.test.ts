@@ -305,6 +305,27 @@ function installInputTransformer(
 	return { remove: () => rmSync(extensionPath, { force: true }) };
 }
 
+function installAppendingInputTransformer(name: string, prefix: string, suffix: string) {
+	const agentDir = process.env.PI_CODING_AGENT_DIR;
+	if (!agentDir) throw new Error("agent dir not isolated");
+	const extensionPath = join(agentDir, "extensions", `${name}.ts`);
+	mkdirSync(dirname(extensionPath), { recursive: true });
+	writeFileSync(
+		extensionPath,
+		[
+			'import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";',
+			"export default function (pi: ExtensionAPI) {",
+			'\tpi.on("input", (event) => {',
+			`\t\tif (!event.text.startsWith(${JSON.stringify(prefix)})) return;`,
+			`\t\treturn { action: "transform", text: event.text + ${JSON.stringify(suffix)} };`,
+			"\t});",
+			"}",
+			"",
+		].join("\n"),
+	);
+	return { remove: () => rmSync(extensionPath, { force: true }) };
+}
+
 function installStalledInputHook(name: string, marker: string, occurrence = 1) {
 	const agentDir = process.env.PI_CODING_AGENT_DIR;
 	if (!agentDir) throw new Error("agent dir not isolated");
@@ -4609,6 +4630,94 @@ test("an extension failing in session_start reaches the client, named, before th
 	}
 });
 
+test("concurrent idle prompts keep a pinned model with its own prompt admission", async () => {
+	const a = createFauxCore({
+		provider: "prompt-admission-a",
+		api: "prompt-admission-a",
+		models: [modelDef("prompt-admission-a")],
+		tokensPerSecond: 100,
+	});
+	const b = createFauxCore({
+		provider: "prompt-admission-b",
+		api: "prompt-admission-b",
+		models: [{ ...modelDef("prompt-admission-b"), reasoning: true }],
+		tokensPerSecond: 100,
+	});
+	const requests: string[] = [];
+	const config = (core: ReturnType<typeof createFauxCore>, id: string) => ({
+		...cfg(core, id),
+		models: [{ ...modelDef(id), reasoning: true, api: core.api }],
+		streamSimple: (...args: Parameters<typeof core.streamSimple>) => {
+			requests.push(args[0].id);
+			return core.streamSimple(...args);
+		},
+	});
+	runtime.registerProvider("prompt-admission-a", config(a, "prompt-admission-a"));
+	runtime.registerProvider("prompt-admission-b", config(b, "prompt-admission-b"));
+	let releasePinned!: () => void;
+	const pinnedGate = new Promise<void>((resolve) => (releasePinned = resolve));
+	let pinnedStarted!: () => void;
+	const pinnedRequest = new Promise<void>((resolve) => (pinnedStarted = resolve));
+	b.setResponses([
+		async () => {
+			pinnedStarted();
+			await pinnedGate;
+			return fauxAssistantMessage("PINNED_DONE");
+		},
+		fauxAssistantMessage("STEERED_DONE"),
+	]);
+	a.setResponses([fauxAssistantMessage("DEFAULT_DONE")]);
+	const hook = installStalledInputHook("prompt-admission-race", "pinned idle prompt");
+	const session = await createSession({
+		cwd: tmpCwd("trpi-prompt-admission-race-"),
+		workspaceId: "ws-prompt-admission-race",
+		model: toWireModel(a.getModel()),
+	});
+	let pinnedRun: Promise<void> | undefined;
+	let ordinaryRun: Promise<void> | undefined;
+	try {
+		pinnedRun = promptSession(session.sessionId, "pinned idle prompt", undefined, {
+			modelSelection: {
+				model: { provider: "prompt-admission-b", id: "prompt-admission-b" },
+				thinkingLevel: "high",
+			},
+		});
+		const hookDeadline = Date.now() + 5000;
+		while (!existsSync(hook.startedPath)) {
+			if (Date.now() > hookDeadline) throw new Error("pinned input hook did not pause");
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		}
+		ordinaryRun = promptSession(session.sessionId, "ordinary idle prompt");
+		const waitingForAdmission = await Promise.race([
+			ordinaryRun.then(() => false),
+			new Promise<true>((resolve) => setTimeout(() => resolve(true), 50)),
+		]);
+		expect(waitingForAdmission).toBe(true);
+		expect(requests).toEqual([]);
+		hook.release();
+		await pinnedRequest;
+		const ordinaryAccepted = await Promise.race([
+			ordinaryRun.then(() => true),
+			new Promise<false>((resolve) => setTimeout(() => resolve(false), 5000)),
+		]);
+		expect(ordinaryAccepted).toBe(true);
+		releasePinned();
+		await Promise.all([pinnedRun, ordinaryRun]);
+		expect(requests).toEqual(["prompt-admission-b"]);
+
+		await promptSession(session.sessionId, "use the session default");
+		expect(requests.at(-1)).toBe("prompt-admission-a");
+	} finally {
+		hook.release();
+		releasePinned();
+		await Promise.all([pinnedRun?.catch(() => {}), ordinaryRun?.catch(() => {})]);
+		if (hasSession(session.sessionId)) await removeSession(session.sessionId);
+		hook.remove();
+		runtime.unregisterProvider("prompt-admission-a");
+		runtime.unregisterProvider("prompt-admission-b");
+	}
+}, 30000);
+
 test("scheduled follow-ups keep per-prompt provider/model/reasoning behind existing queue entries", async () => {
 	const a = createFauxCore({
 		provider: "scheduled-a",
@@ -5223,6 +5332,58 @@ test("scheduled follow-up metadata survives input text transformation", async ()
 		hook.remove();
 		runtime.unregisterProvider("scheduled-transform-a");
 		runtime.unregisterProvider("scheduled-transform-b");
+	}
+}, 30000);
+
+test("restoring an accepted queued prompt does not transform it again", async () => {
+	const core = createFauxCore({
+		provider: "scheduled-restore-transform",
+		api: "scheduled-restore-transform",
+		models: [modelDef("scheduled-restore-transform")],
+		tokensPerSecond: 100,
+	});
+	runtime.registerProvider("scheduled-restore-transform", cfg(core, "scheduled-restore-transform"));
+	let releaseInitial!: () => void;
+	const initialGate = new Promise<void>((resolve) => (releaseInitial = resolve));
+	let initialStarted!: () => void;
+	const initialRequest = new Promise<void>((resolve) => (initialStarted = resolve));
+	core.setResponses([
+		async () => {
+			initialStarted();
+			await initialGate;
+			return fauxAssistantMessage("INITIAL_DONE");
+		},
+	]);
+	const hook = installAppendingInputTransformer(
+		"scheduled-restore-transform",
+		"scheduled prompt",
+		"!",
+	);
+	const session = await createSession({
+		cwd: tmpCwd("trpi-scheduled-restore-transform-"),
+		workspaceId: "ws-scheduled-restore-transform",
+		model: toWireModel(core.getModel()),
+	});
+	let run: Promise<void> | undefined;
+	try {
+		run = promptSession(session.sessionId, "initial");
+		run.catch(() => {});
+		await initialRequest;
+		await scheduleFollowUpSession(session.sessionId, "scheduled prompt");
+		await followUpSession(session.sessionId, "remove me");
+		const removed = await removeQueuedSession(session.sessionId, "followUp", 1);
+		expect(removed.removed?.text).toBe("remove me");
+		expect(clearQueueSession(session.sessionId).followUp.map((message) => message.text)).toEqual([
+			"scheduled prompt!",
+		]);
+		releaseInitial();
+		await run;
+	} finally {
+		releaseInitial();
+		await run?.catch(() => {});
+		if (hasSession(session.sessionId)) await removeSession(session.sessionId);
+		hook.remove();
+		runtime.unregisterProvider("scheduled-restore-transform");
 	}
 }, 30000);
 
