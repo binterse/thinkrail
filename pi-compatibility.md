@@ -233,6 +233,14 @@ apart from the recorded selection. Run the manager's restart regressions on upgr
   and retains image content lost by the destructive queue API. Remove the corresponding workaround
   when the installed implementation handles that case natively; verify the queue/image regressions,
   not just the issue state.
+- **Scheduled-delivery freshness** — [[submodule-server-agent]],
+  `installScheduledPromptPreflight`. Pi's `AgentSession.prompt()` exposes only an observer callback,
+  which fires after queue admission or run preparation; it cannot reject a prompt whose schedule was
+  cancelled or moved while async input handlers ran. The host temporarily scopes public
+  `ExtensionRunner` input methods and `Agent.prompt()` to check freshness before Pi queues or starts the
+  scheduled prompt. **Removal gate:** Pi exposes a cancellable preflight predicate after input handlers and
+  before queue admission or run start. Re-test cancellation and rescheduling during stalled input
+  preflight on every Pi upgrade.
 - **Bundled extension loading and image handling** — [[submodule-server-agent]], [[module-cli]],
   [[module-desktop]]. Forced Jiti transformation, virtual-module identity, static provider registration,
   and the image-resize override bridge resources a single-file artifact cannot discover or load.

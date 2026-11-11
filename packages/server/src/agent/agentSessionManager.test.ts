@@ -54,6 +54,7 @@ import {
 	getSessionStats,
 	hasSession,
 	initializeSessionStates,
+	isSessionStreaming,
 	listAvailableModels,
 	listSessionStates,
 	listSessions,
@@ -241,6 +242,58 @@ function installUntrackedFollowUpHook(
 	return { remove: () => rmSync(extensionPath, { force: true }) };
 }
 
+function installUntrackedFollowUpAfterMessageStart(
+	name: string,
+	trigger: string,
+	text: string,
+): { remove: () => void } {
+	const agentDir = process.env.PI_CODING_AGENT_DIR;
+	if (!agentDir) throw new Error("agent dir not isolated");
+	const extensionPath = join(agentDir, "extensions", `${name}.ts`);
+	mkdirSync(dirname(extensionPath), { recursive: true });
+	writeFileSync(
+		extensionPath,
+		[
+			'import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";',
+			"export default function (pi: ExtensionAPI) {",
+			'\tpi.on("message_start", async (event) => {',
+			'\t\tif (event.message.role !== "user" || !Array.isArray(event.message.content)) return;',
+			'\t\tconst prompt = event.message.content.filter((part) => part.type === "text").map((part) => part.text).join("\\n");',
+			`\t\tif (prompt !== ${JSON.stringify(trigger)}) return;`,
+			`\t\tawait pi.sendUserMessage(${JSON.stringify(text)}, { deliverAs: "followUp" });`,
+			"\t});",
+			"}",
+			"",
+		].join("\n"),
+	);
+	return { remove: () => rmSync(extensionPath, { force: true }) };
+}
+
+function installInputTransformer(
+	name: string,
+	trigger: string,
+	text: string,
+): { remove: () => void } {
+	const agentDir = process.env.PI_CODING_AGENT_DIR;
+	if (!agentDir) throw new Error("agent dir not isolated");
+	const extensionPath = join(agentDir, "extensions", `${name}.ts`);
+	mkdirSync(dirname(extensionPath), { recursive: true });
+	writeFileSync(
+		extensionPath,
+		[
+			'import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";',
+			"export default function (pi: ExtensionAPI) {",
+			'\tpi.on("input", (event) => {',
+			`\t\tif (event.text !== ${JSON.stringify(trigger)}) return;`,
+			`\t\treturn { action: "transform", text: ${JSON.stringify(text)} };`,
+			"\t});",
+			"}",
+			"",
+		].join("\n"),
+	);
+	return { remove: () => rmSync(extensionPath, { force: true }) };
+}
+
 function installStalledInputHook(name: string, marker: string, occurrence = 1) {
 	const agentDir = process.env.PI_CODING_AGENT_DIR;
 	if (!agentDir) throw new Error("agent dir not isolated");
@@ -260,6 +313,37 @@ function installStalledInputHook(name: string, marker: string, occurrence = 1) {
 			'\tpi.on("input", async (event) => {',
 			`\t\tif (!event.text.includes(${JSON.stringify(marker)})) return;`,
 			`\t\tif (++matches !== ${occurrence}) return;`,
+			`\t\twriteFileSync(${JSON.stringify(startedPath)}, "");`,
+			`\t\twhile (!existsSync(${JSON.stringify(releasePath)})) await sleep(2);`,
+			"\t});",
+			"}",
+			"",
+		].join("\n"),
+	);
+	return {
+		startedPath,
+		release: () => writeFileSync(releasePath, ""),
+		remove: () => rmSync(extensionPath, { force: true }),
+	};
+}
+
+function installStalledBeforeAgentStartHook(name: string, marker: string) {
+	const agentDir = process.env.PI_CODING_AGENT_DIR;
+	if (!agentDir) throw new Error("agent dir not isolated");
+	const controlDir = tmpCwd(`trpi-${name}-`);
+	const startedPath = join(controlDir, "started");
+	const releasePath = join(controlDir, "release");
+	const extensionPath = join(agentDir, "extensions", `${name}.ts`);
+	mkdirSync(dirname(extensionPath), { recursive: true });
+	writeFileSync(
+		extensionPath,
+		[
+			'import { existsSync, writeFileSync } from "node:fs";',
+			'import { setTimeout as sleep } from "node:timers/promises";',
+			'import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";',
+			"export default function (pi: ExtensionAPI) {",
+			'\tpi.on("before_agent_start", async (event) => {',
+			`\t\tif (event.messageType !== "user" || event.prompt !== ${JSON.stringify(marker)}) return;`,
 			`\t\twriteFileSync(${JSON.stringify(startedPath)}, "");`,
 			`\t\twhile (!existsSync(${JSON.stringify(releasePath)})) await sleep(2);`,
 			"\t});",
@@ -4486,12 +4570,19 @@ test("scheduled follow-ups keep per-prompt provider/model/reasoning behind exist
 			{ provider: "scheduled-a", model: "model-a", reasoning: "low" },
 			{ provider: "scheduled-b", model: "model-b", reasoning: "high" },
 		]);
-		a.appendResponses([fauxAssistantMessage("PIN_A_IDLE")]);
-		await promptSession(session.sessionId, "edited while idle", undefined, pairA);
+		b.appendResponses([fauxAssistantMessage("PIN_B_IDLE")]);
+		await promptSession(session.sessionId, "edited while idle", undefined, pairB);
+		expect(requests.at(-1)).toEqual({
+			provider: "scheduled-b",
+			model: "model-b",
+			reasoning: "high",
+		});
+		a.appendResponses([fauxAssistantMessage("DEFAULT_AFTER_IDLE_PIN")]);
+		await promptSession(session.sessionId, "use the session model again");
 		expect(requests.at(-1)).toEqual({
 			provider: "scheduled-a",
 			model: "model-a",
-			reasoning: "low",
+			reasoning: undefined,
 		});
 
 		await expect(
@@ -4607,6 +4698,161 @@ test("a pending scheduled follow-up keeps its model pin when a manual follow-up 
 	}
 }, 30000);
 
+test("scheduled follow-up is withdrawn when its record changes during async input preflight", async () => {
+	const a = createFauxCore({
+		provider: "scheduled-stale-a",
+		api: "scheduled-stale-a",
+		models: [modelDef("stale-a")],
+		tokensPerSecond: 100,
+	});
+	const b = createFauxCore({
+		provider: "scheduled-stale-b",
+		api: "scheduled-stale-b",
+		models: [modelDef("stale-b")],
+		tokensPerSecond: 100,
+	});
+	const requests: string[] = [];
+	const config = (core: ReturnType<typeof createFauxCore>, model: string) => ({
+		...cfg(core, model),
+		models: [{ ...modelDef(model), api: core.api }],
+		streamSimple: (...args: Parameters<typeof core.streamSimple>) => {
+			requests.push(args[0].id);
+			return core.streamSimple(...args);
+		},
+	});
+	runtime.registerProvider("scheduled-stale-a", config(a, "stale-a"));
+	runtime.registerProvider("scheduled-stale-b", config(b, "stale-b"));
+	let releaseInitial!: () => void;
+	const initialGate = new Promise<void>((resolve) => (releaseInitial = resolve));
+	let initialStarted!: () => void;
+	const initialRequest = new Promise<void>((resolve) => (initialStarted = resolve));
+	a.setResponses([
+		async () => {
+			initialStarted();
+			await initialGate;
+			return fauxAssistantMessage("INITIAL_DONE");
+		},
+	]);
+	b.setResponses([fauxAssistantMessage("STALE_PROMPT_SHOULD_NOT_RUN")]);
+	const hook = installStalledInputHook("scheduled-stale", "scheduled B");
+	const session = await createSession({
+		cwd: tmpCwd("trpi-scheduled-stale-"),
+		workspaceId: "ws-scheduled-stale",
+		model: toWireModel(a.getModel()),
+	});
+	let run: Promise<void> | undefined;
+	try {
+		run = promptSession(session.sessionId, "initial");
+		run.catch(() => {});
+		await initialRequest;
+		let current = true;
+		const scheduled = acceptScheduledFollowUpSession(
+			session.sessionId,
+			"scheduled B",
+			undefined,
+			undefined,
+			() => current,
+		);
+		const hookDeadline = Date.now() + 5000;
+		while (!existsSync(hook.startedPath)) {
+			if (Date.now() > hookDeadline) throw new Error("scheduled input hook did not pause");
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		}
+		current = false;
+		hook.release();
+		const accepted = await scheduled;
+		const queued = clearQueueSession(session.sessionId).followUp;
+		expect({ accepted, queued }).toEqual({ accepted: false, queued: [] });
+		releaseInitial();
+		await run;
+		expect(requests).toEqual(["stale-a"]);
+		expect(seen(session.sessionId)).not.toContain("STALE_PROMPT_SHOULD_NOT_RUN");
+	} finally {
+		hook.release();
+		releaseInitial();
+		if (hasSession(session.sessionId)) await removeSession(session.sessionId);
+		await run?.catch(() => {});
+		hook.remove();
+		runtime.unregisterProvider("scheduled-stale-a");
+		runtime.unregisterProvider("scheduled-stale-b");
+	}
+}, 30000);
+
+test("scheduled idle prompt is withdrawn when its record changes before run start", async () => {
+	const a = createFauxCore({
+		provider: "scheduled-idle-stale-a",
+		api: "scheduled-idle-stale-a",
+		models: [modelDef("idle-stale-a")],
+		tokensPerSecond: 100,
+	});
+	const b = createFauxCore({
+		provider: "scheduled-idle-stale-b",
+		api: "scheduled-idle-stale-b",
+		models: [modelDef("idle-stale-b")],
+		tokensPerSecond: 100,
+	});
+	const requests: string[] = [];
+	const config = (core: ReturnType<typeof createFauxCore>, model: string) => ({
+		...cfg(core, model),
+		models: [{ ...modelDef(model), api: core.api }],
+		streamSimple: (...args: Parameters<typeof core.streamSimple>) => {
+			requests.push(args[0].id);
+			return core.streamSimple(...args);
+		},
+	});
+	runtime.registerProvider("scheduled-idle-stale-a", config(a, "idle-stale-a"));
+	runtime.registerProvider("scheduled-idle-stale-b", config(b, "idle-stale-b"));
+	a.setResponses([fauxAssistantMessage("IDLE_STALE_SHOULD_NOT_RUN")]);
+	b.setResponses([fauxAssistantMessage("IDLE_STALE_SHOULD_NOT_RUN")]);
+	const hook = installStalledBeforeAgentStartHook("scheduled-idle-stale", "scheduled B");
+	const cwd = tmpCwd("trpi-scheduled-idle-stale-");
+	const session = await createSession({
+		cwd,
+		workspaceId: "ws-scheduled-idle-stale",
+		model: toWireModel(a.getModel()),
+	});
+	try {
+		let current = true;
+		const scheduled = acceptScheduledFollowUpSession(
+			session.sessionId,
+			"scheduled B",
+			undefined,
+			{
+				model: { provider: "scheduled-idle-stale-b", id: "idle-stale-b" },
+				thinkingLevel: "off",
+			},
+			() => current,
+		);
+		const hookDeadline = Date.now() + 5000;
+		while (!existsSync(hook.startedPath)) {
+			if (Date.now() > hookDeadline) throw new Error("before-agent-start hook did not pause");
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		}
+		current = false;
+		hook.release();
+		expect(await scheduled).toBe(false);
+		const settleDeadline = Date.now() + 5000;
+		while (isSessionStreaming(session.sessionId)) {
+			if (Date.now() > settleDeadline) throw new Error("stale direct start did not settle");
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		}
+		expect(requests).toEqual([]);
+		const transcript = await getSessionMessages(session.sessionId, "ws-scheduled-idle-stale", cwd);
+		expect(
+			transcript.messages.some(
+				(message) =>
+					message.role === "user" && JSON.stringify(message.content).includes("scheduled B"),
+			),
+		).toBe(false);
+	} finally {
+		hook.release();
+		if (hasSession(session.sessionId)) await removeSession(session.sessionId);
+		hook.remove();
+		runtime.unregisterProvider("scheduled-idle-stale-a");
+		runtime.unregisterProvider("scheduled-idle-stale-b");
+	}
+}, 30000);
+
 test("scheduled follow-up metadata survives a queue update during async preflight", async () => {
 	const a = createFauxCore({
 		provider: "scheduled-queue-race-a",
@@ -4711,6 +4957,93 @@ test("scheduled follow-up metadata survives a queue update during async prefligh
 		hook.remove();
 		runtime.unregisterProvider("scheduled-queue-race-a");
 		runtime.unregisterProvider("scheduled-queue-race-b");
+	}
+}, 30000);
+
+test("scheduled follow-up metadata survives input text transformation", async () => {
+	const a = createFauxCore({
+		provider: "scheduled-transform-a",
+		api: "scheduled-transform-a",
+		models: [modelDef("transform-a")],
+		tokensPerSecond: 100,
+	});
+	const b = createFauxCore({
+		provider: "scheduled-transform-b",
+		api: "scheduled-transform-b",
+		models: [{ ...modelDef("transform-b"), reasoning: true }],
+		tokensPerSecond: 100,
+	});
+	const requests: string[] = [];
+	const config = (core: ReturnType<typeof createFauxCore>, model: string) => ({
+		...cfg(core, model),
+		models: [{ ...modelDef(model), reasoning: true, api: core.api }],
+		streamSimple: (...args: Parameters<typeof core.streamSimple>) => {
+			requests.push(args[0].id);
+			return core.streamSimple(...args);
+		},
+	});
+	runtime.registerProvider("scheduled-transform-a", config(a, "transform-a"));
+	runtime.registerProvider("scheduled-transform-b", config(b, "transform-b"));
+	let releaseInitial!: () => void;
+	const initialGate = new Promise<void>((resolve) => (releaseInitial = resolve));
+	let initialStarted!: () => void;
+	const initialRequest = new Promise<void>((resolve) => (initialStarted = resolve));
+	a.setResponses([
+		async () => {
+			initialStarted();
+			await initialGate;
+			return fauxAssistantMessage("INITIAL_DONE");
+		},
+	]);
+	b.setResponses([fauxAssistantMessage("TRANSFORMED_SCHEDULE_DONE")]);
+	const hook = installInputTransformer(
+		"scheduled-transform",
+		"scheduled B",
+		"transformed scheduled B",
+	);
+	const image = { type: "image", data: "AA==", mimeType: "image/png" } satisfies ImageContent;
+	const selection = {
+		model: { provider: "scheduled-transform-b", id: "transform-b" },
+		thinkingLevel: "high" as const,
+	};
+	const session = await createSession({
+		cwd: tmpCwd("trpi-scheduled-transform-"),
+		workspaceId: "ws-scheduled-transform",
+		model: toWireModel(a.getModel()),
+	});
+	let run: Promise<void> | undefined;
+	try {
+		run = promptSession(session.sessionId, "initial");
+		run.catch(() => {});
+		await initialRequest;
+		expect(
+			await acceptScheduledFollowUpSession(session.sessionId, "scheduled B", [image], selection),
+		).toBe(true);
+		const removed = await removeQueuedSession(session.sessionId, "followUp", 0);
+		expect(removed.removed).toEqual({
+			text: "transformed scheduled B",
+			images: [image],
+			modelSelection: selection,
+		});
+		if (!removed.removed)
+			throw new Error("The transformed scheduled message was not in Pi's queue");
+		await followUpSession(
+			session.sessionId,
+			removed.removed.text,
+			removed.removed.images ? [...removed.removed.images] : undefined,
+			removed.removed.modelSelection,
+		);
+		releaseInitial();
+		await run;
+		expect(requests).toEqual(["transform-a", "transform-b"]);
+		expect(seen(session.sessionId)).toContain("TRANSFORMED_SCHEDULE_DONE");
+	} finally {
+		releaseInitial();
+		await run?.catch(() => {});
+		if (hasSession(session.sessionId)) await removeSession(session.sessionId);
+		hook.remove();
+		runtime.unregisterProvider("scheduled-transform-a");
+		runtime.unregisterProvider("scheduled-transform-b");
 	}
 }, 30000);
 
@@ -4874,6 +5207,76 @@ test("queue reconciliation retains tracked metadata before an untracked follow-u
 		hook.remove();
 		runtime.unregisterProvider("scheduled-untracked-a");
 		runtime.unregisterProvider("scheduled-untracked-b");
+	}
+}, 30000);
+
+test("an untracked follow-up does not inherit the previous prompt model pin", async () => {
+	const a = createFauxCore({
+		provider: "scheduled-untracked-model-a",
+		api: "scheduled-untracked-model-a",
+		models: [{ ...modelDef("untracked-model-a"), reasoning: true }],
+		tokensPerSecond: 100,
+	});
+	const b = createFauxCore({
+		provider: "scheduled-untracked-model-b",
+		api: "scheduled-untracked-model-b",
+		models: [{ ...modelDef("untracked-model-b"), reasoning: true }],
+		tokensPerSecond: 100,
+	});
+	const requests: string[] = [];
+	const config = (core: ReturnType<typeof createFauxCore>, model: string) => ({
+		...cfg(core, model),
+		models: [{ ...modelDef(model), reasoning: true, api: core.api }],
+		streamSimple: (...args: Parameters<typeof core.streamSimple>) => {
+			requests.push(args[0].id);
+			return core.streamSimple(...args);
+		},
+	});
+	runtime.registerProvider("scheduled-untracked-model-a", config(a, "untracked-model-a"));
+	runtime.registerProvider("scheduled-untracked-model-b", config(b, "untracked-model-b"));
+	let releaseInitial!: () => void;
+	const initialGate = new Promise<void>((resolve) => (releaseInitial = resolve));
+	let initialStarted!: () => void;
+	const initialRequest = new Promise<void>((resolve) => (initialStarted = resolve));
+	a.setResponses([
+		async () => {
+			initialStarted();
+			await initialGate;
+			return fauxAssistantMessage("INITIAL_DONE");
+		},
+		fauxAssistantMessage("UNTRACKED_DONE"),
+	]);
+	b.setResponses([fauxAssistantMessage("PINNED_DONE")]);
+	const hook = installUntrackedFollowUpAfterMessageStart(
+		"scheduled-untracked-model-follow-up",
+		"pinned follow-up",
+		"untracked model follow-up",
+	);
+	const session = await createSession({
+		cwd: tmpCwd("trpi-scheduled-untracked-model-"),
+		workspaceId: "ws-scheduled-untracked-model",
+		model: toWireModel(a.getModel()),
+		thinkingLevel: "off",
+	});
+	let run: Promise<void> | undefined;
+	try {
+		run = promptSession(session.sessionId, "initial");
+		run.catch(() => {});
+		await initialRequest;
+		await followUpSession(session.sessionId, "pinned follow-up", undefined, {
+			model: { provider: "scheduled-untracked-model-b", id: "untracked-model-b" },
+			thinkingLevel: "high",
+		});
+		releaseInitial();
+		await run;
+		expect(requests).toEqual(["untracked-model-a", "untracked-model-b", "untracked-model-a"]);
+	} finally {
+		releaseInitial();
+		if (hasSession(session.sessionId)) await removeSession(session.sessionId);
+		await run?.catch(() => {});
+		hook.remove();
+		runtime.unregisterProvider("scheduled-untracked-model-a");
+		runtime.unregisterProvider("scheduled-untracked-model-b");
 	}
 }, 30000);
 
