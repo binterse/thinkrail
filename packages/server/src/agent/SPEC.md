@@ -331,18 +331,18 @@ re-opened transcripts provider-valid.
     New-session and pre-session entrypoints capture the current generation; operations on a live session use
     that session's retained runtime. `abort` remains available as the cancellation control path.
     `prompt`/`steer`/`followUp` (with images; `prompt` and `followUp` may carry a pinned model/reasoning pair).
-    — `promptSession`'s optional `onPreflight` fires with pi's `preflightResult` (model and auth validated,
-    the run started, queued or handled), which lets a caller stop waiting before the agent's turn ends
-    — **`promptSession` and `followUpSession` preserve their delivery semantics through Pi's preflight**:
-    unpinned `promptSession` steers a live run, while follow-ups use `prompt(..., streamingBehavior: "followUp")`
-    so Pi chooses queue versus run start after async input handlers. Calling Pi's `followUp()` directly only
-    enqueues and can park if the active run settles while an input hook is pending. A pinned `promptSession`
-    observed during a live turn uses the follow-up lane instead of steer, preserving the selected pair until
-    that separate prompt starts; when Pi starts it, the pair is staged before the provider request.
-    Follow-up admissions are serialized per session until Pi reports a queued or started preflight, so
-    concurrent queue updates cannot drop a newly tracked model pin; this lock does not wait for the agent turn.
-    Pinned follow-ups are consumed one at a time, applying their pair at the provider request boundary.
-    / **`clearQueueSession`** (Pi's `clearQueue()`: drains both queues but returns only text,
+    Follow-ups use `session.prompt(..., streamingBehavior: "followUp")` and wait for Pi's preflight
+    result after async input handlers. This lets Pi queue while a turn is active or start the follow-up
+    if that turn settles during a handler. Admission is serialized per session only until Pi accepts the
+    queue entry or starts the run; it never waits for the model run to finish. Pending admission metadata
+    stays separate from Pi's queue mirror until the accepted entry appears there, so intermediate queue
+    updates cannot discard or misattribute its images or model selection. A pinned `promptSession` during
+    a live turn uses the follow-up lane instead of steer; pinned selections remain attached per message and
+    apply at the provider request boundary through steering messages in the same run. The live parent
+    projection exposes the active pair so delegated children inherit it. An unpinned queued prompt or final
+    `agent_settled` clears the selection. /
+    **`clearQueueSession`**
+    (Pi's `clearQueue()`: drains both queues but returns only text,
     while the host snapshots its reconciled transient mirror first and returns complete per-message text +
     images + any pinned model selection. Pi emits the emptying `queue_update`). Its optional text-only precondition rejects before
     touching Pi whenever either tracked lane has queued images; manual compaction uses that guard, while
