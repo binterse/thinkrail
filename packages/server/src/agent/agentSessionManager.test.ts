@@ -4578,6 +4578,95 @@ test("a pending scheduled follow-up keeps its model pin when a manual follow-up 
 	}
 }, 30000);
 
+test("steering during a pinned follow-up keeps that model for the rest of the run", async () => {
+	const a = createFauxCore({
+		provider: "scheduled-steer-a",
+		api: "scheduled-steer-a",
+		models: [{ ...modelDef("steer-a"), reasoning: true }],
+		tokensPerSecond: 100,
+	});
+	const b = createFauxCore({
+		provider: "scheduled-steer-b",
+		api: "scheduled-steer-b",
+		models: [{ ...modelDef("steer-b"), reasoning: true }],
+		tokensPerSecond: 100,
+	});
+	const requests: { provider: string; model: string; reasoning: unknown }[] = [];
+	const config = (core: ReturnType<typeof createFauxCore>, model: string) => ({
+		...cfg(core, model),
+		models: [{ ...modelDef(model), reasoning: true, api: core.api }],
+		streamSimple: (...args: Parameters<typeof core.streamSimple>) => {
+			requests.push({
+				provider: args[0].provider,
+				model: args[0].id,
+				reasoning: args[2]?.reasoning,
+			});
+			return core.streamSimple(...args);
+		},
+	});
+	runtime.registerProvider("scheduled-steer-a", config(a, "steer-a"));
+	runtime.registerProvider("scheduled-steer-b", config(b, "steer-b"));
+	let releaseInitial!: () => void;
+	const initialGate = new Promise<void>((resolve) => (releaseInitial = resolve));
+	let initialStarted!: () => void;
+	const initialRequest = new Promise<void>((resolve) => (initialStarted = resolve));
+	let releasePinned!: () => void;
+	const pinnedGate = new Promise<void>((resolve) => (releasePinned = resolve));
+	let pinnedStarted!: () => void;
+	const pinnedRequest = new Promise<void>((resolve) => (pinnedStarted = resolve));
+	a.setResponses([
+		async () => {
+			initialStarted();
+			await initialGate;
+			return fauxAssistantMessage("INITIAL_DONE");
+		},
+	]);
+	b.setResponses([
+		async () => {
+			pinnedStarted();
+			await pinnedGate;
+			return fauxAssistantMessage("PINNED_FIRST_RESPONSE");
+		},
+		fauxAssistantMessage("PINNED_AFTER_STEER"),
+	]);
+	const session = await createSession({
+		cwd: tmpCwd("trpi-scheduled-steer-pin-"),
+		workspaceId: "ws-scheduled-steer-pin",
+		model: toWireModel(a.getModel()),
+		thinkingLevel: "off",
+	});
+	let run: Promise<void> | undefined;
+	try {
+		run = promptSession(session.sessionId, "initial");
+		run.catch(() => {});
+		await initialRequest;
+		expect(
+			await acceptScheduledFollowUpSession(session.sessionId, "scheduled B", undefined, {
+				model: { provider: "scheduled-steer-b", id: "steer-b" },
+				thinkingLevel: "high",
+			}),
+		).toBe(true);
+		releaseInitial();
+		await pinnedRequest;
+		await steerSession(session.sessionId, "steer the pinned run");
+		releasePinned();
+		await run;
+		expect(requests).toEqual([
+			{ provider: "scheduled-steer-a", model: "steer-a", reasoning: undefined },
+			{ provider: "scheduled-steer-b", model: "steer-b", reasoning: "high" },
+			{ provider: "scheduled-steer-b", model: "steer-b", reasoning: "high" },
+		]);
+		expect(seen(session.sessionId)).toContain("PINNED_AFTER_STEER");
+	} finally {
+		releaseInitial();
+		releasePinned();
+		await run?.catch(() => {});
+		if (hasSession(session.sessionId)) await removeSession(session.sessionId);
+		runtime.unregisterProvider("scheduled-steer-a");
+		runtime.unregisterProvider("scheduled-steer-b");
+	}
+}, 30000);
+
 test("a scheduled follow-up does not answer a live agent question", async () => {
 	const toolCallId = "scheduled-cannot-answer-question";
 	fauxA.setResponses([

@@ -325,7 +325,9 @@ re-opened transcripts provider-valid.
     result after async input handlers. This lets Pi queue while a turn is active or start the follow-up
     if that turn settles during a handler. Admission is serialized per session only until Pi accepts the
     queue entry or starts the run; it never waits for the model run to finish. Pinned selections remain
-    attached to queued messages and apply at the provider request boundary. / **`clearQueueSession`**
+    attached to queued messages and apply at the provider request boundary through steering messages in
+    the same run; an unpinned queued prompt or final `agent_settled` clears the selection. /
+    **`clearQueueSession`**
     (Pi's `clearQueue()`: drains both queues but returns only text,
     while the host snapshots its reconciled transient mirror first and returns complete per-message text +
     images + any pinned model selection. Pi emits the emptying `queue_update`). Its optional text-only precondition rejects before

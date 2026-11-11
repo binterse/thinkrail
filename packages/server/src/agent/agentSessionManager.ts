@@ -1278,6 +1278,7 @@ async function prepareSessionEntry(
 				: baseEvent;
 		if (event.type === "agent_settled") {
 			entry.lastSettlement = terminal;
+			entry.activePromptModelSelection = undefined;
 			try {
 				recordSettlement(entry, terminal);
 			} catch (error) {
@@ -1312,7 +1313,9 @@ async function prepareSessionEntry(
 		if (event.type === "message_start" && event.message.role === "user") {
 			const text = userContentText(event.message.content);
 			const consumed = entry.dequeuedFollowUps.find((item) => item.text === text);
-			entry.activePromptModelSelection = entry.nextPromptModelSelection ?? consumed?.modelSelection;
+			if (entry.nextPromptModelSelection !== undefined || consumed !== undefined)
+				entry.activePromptModelSelection =
+					entry.nextPromptModelSelection ?? consumed?.modelSelection;
 			entry.nextPromptModelSelection = undefined;
 			entry.dequeuedFollowUps = [];
 		}
