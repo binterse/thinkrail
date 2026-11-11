@@ -332,8 +332,8 @@ re-opened transcripts provider-valid.
     checks after async input handlers and at the direct run boundary, so a cancelled or rescheduled delivery
     is not handed to Pi. The guard compensates for Pi's non-cancellable preflight; its removal gate is in
     [[pi-compatibility]]. Pending admission metadata stays separate from Pi's queue mirror until the accepted
-    entry appears there. The host matches accepted
-    input-handler transformations against Pi's queued text, retaining associated images and model selection.
+    entry appears there. The host captures the final text and image set from the input-handler transformation
+    and attaches them to the accepted queue entry with its model selection.
     Pinned selections stay per prompt, apply at the provider request boundary without changing session
     defaults, and remain active through steering messages in the same run; the live parent projection
     exposes the active pair so delegated children inherit it. An unpinned queued
