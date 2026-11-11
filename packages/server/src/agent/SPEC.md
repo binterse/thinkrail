@@ -268,7 +268,10 @@ re-opened transcripts provider-valid.
     while Pi reports the corresponding text entry pending. That transient mirror exists solely because Pi's
     destructive queue API returns text but drops image blocks; Pi's queue events remain authoritative for
     membership/order. The host projects only a conservative `hasImages` aggregate into summaries/events, so
-    image bytes do not ride the ordinary read stream.
+    image bytes do not ride the ordinary read stream. Follow-up messages stay outside reconciliation
+    candidates until Pi acknowledges queue admission, so an identical older prompt cannot claim their model
+    or image metadata. Reconciliation searches from the tail for each reported text; an untracked Pi-added
+    follow-up does not consume candidates and hide matches for earlier queued messages.
 
     Pi ≥ 1.5.1 clears a delivered image-only (empty-text) queued message itself (upstream #8612); the host
     override that counted such deliveries and synthesized the emptying `queue_update` is gone, and the
