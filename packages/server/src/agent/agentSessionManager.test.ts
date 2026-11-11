@@ -214,6 +214,37 @@ function installInputSwallower(name: string, marker: string): { remove: () => vo
 	return { remove: () => rmSync(extensionPath, { force: true }) };
 }
 
+function installStalledInputHook(name: string, marker: string) {
+	const agentDir = process.env.PI_CODING_AGENT_DIR;
+	if (!agentDir) throw new Error("agent dir not isolated");
+	const controlDir = tmpCwd(`trpi-${name}-`);
+	const startedPath = join(controlDir, "started");
+	const releasePath = join(controlDir, "release");
+	const extensionPath = join(agentDir, "extensions", `${name}.ts`);
+	mkdirSync(dirname(extensionPath), { recursive: true });
+	writeFileSync(
+		extensionPath,
+		[
+			'import { existsSync, writeFileSync } from "node:fs";',
+			'import { setTimeout as sleep } from "node:timers/promises";',
+			'import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";',
+			"export default function (pi: ExtensionAPI) {",
+			'\tpi.on("input", async (event) => {',
+			`\t\tif (!event.text.includes(${JSON.stringify(marker)})) return;`,
+			`\t\twriteFileSync(${JSON.stringify(startedPath)}, "");`,
+			`\t\twhile (!existsSync(${JSON.stringify(releasePath)})) await sleep(2);`,
+			"\t});",
+			"}",
+			"",
+		].join("\n"),
+	);
+	return {
+		startedPath,
+		release: () => writeFileSync(releasePath, ""),
+		remove: () => rmSync(extensionPath, { force: true }),
+	};
+}
+
 function installStalledAskResultHook(name: string): { startedPath: string; remove: () => void } {
 	const agentDir = process.env.PI_CODING_AGENT_DIR;
 	if (!agentDir) throw new Error("agent dir not isolated");
@@ -4422,7 +4453,7 @@ test("scheduled follow-ups keep per-prompt provider/model/reasoning behind exist
 			await followUpSession(session.sessionId, item.text, undefined, item.modelSelection);
 		await secondTurn;
 		expect(requests.slice(beforeEdit)).toEqual([
-			{ provider: "scheduled-b", model: "model-b", reasoning: "low" },
+			{ provider: "scheduled-a", model: "model-a", reasoning: undefined },
 			{ provider: "scheduled-a", model: "model-a", reasoning: "low" },
 			{ provider: "scheduled-b", model: "model-b", reasoning: "high" },
 		]);
@@ -4449,6 +4480,138 @@ test("scheduled follow-ups keep per-prompt provider/model/reasoning behind exist
 		).rejects.toThrow();
 	} finally {
 		await removeSession(session.sessionId);
+	}
+}, 30000);
+
+test("a pending scheduled follow-up keeps its model pin when a manual follow-up arrives", async () => {
+	const a = createFauxCore({
+		provider: "scheduled-admission-a",
+		api: "scheduled-admission-a",
+		models: [{ ...modelDef("admission-a"), reasoning: true }],
+		tokensPerSecond: 100,
+	});
+	const b = createFauxCore({
+		provider: "scheduled-admission-b",
+		api: "scheduled-admission-b",
+		models: [{ ...modelDef("admission-b"), reasoning: true }],
+		tokensPerSecond: 100,
+	});
+	const requests: string[] = [];
+	const configA = {
+		...cfg(a, "admission-a"),
+		models: [{ ...modelDef("admission-a"), reasoning: true, api: a.api }],
+		streamSimple: (...args: Parameters<typeof a.streamSimple>) => {
+			requests.push(args[0].id);
+			return a.streamSimple(...args);
+		},
+	};
+	const configB = {
+		...cfg(b, "admission-b"),
+		models: [{ ...modelDef("admission-b"), reasoning: true, api: b.api }],
+		streamSimple: (...args: Parameters<typeof b.streamSimple>) => {
+			requests.push(args[0].id);
+			return b.streamSimple(...args);
+		},
+	};
+	runtime.registerProvider("scheduled-admission-a", configA);
+	runtime.registerProvider("scheduled-admission-b", configB);
+	let releaseRun!: () => void;
+	const runGate = new Promise<void>((resolve) => (releaseRun = resolve));
+	let requestStarted!: () => void;
+	const firstRequest = new Promise<void>((resolve) => (requestStarted = resolve));
+	a.setResponses([
+		async () => {
+			requestStarted();
+			await runGate;
+			return fauxAssistantMessage("FIRST_DONE");
+		},
+		fauxAssistantMessage("MANUAL_DONE"),
+	]);
+	b.setResponses([fauxAssistantMessage("SCHEDULED_DONE")]);
+	const hook = installStalledInputHook("scheduled-admission", "scheduled B");
+	let sessionId: string | undefined;
+	let run: Promise<void> | undefined;
+	try {
+		const session = await createSession({
+			cwd: tmpCwd("trpi-scheduled-admission-"),
+			workspaceId: "ws-scheduled-admission",
+			model: toWireModel(a.getModel()),
+			thinkingLevel: "off",
+		});
+		sessionId = session.sessionId;
+		run = promptSession(sessionId, "initial");
+		await firstRequest;
+		const scheduled = acceptScheduledFollowUpSession(sessionId, "scheduled B", undefined, {
+			model: { provider: "scheduled-admission-b", id: "admission-b" },
+			thinkingLevel: "high",
+		});
+		const hookDeadline = Date.now() + 5000;
+		while (!existsSync(hook.startedPath)) {
+			if (Date.now() > hookDeadline) throw new Error("scheduled input hook did not pause");
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		}
+		const manual = followUpSession(sessionId, "ordinary follow-up");
+		const admissionState = await Promise.race([
+			manual.then(() => "settled" as const),
+			new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 50)),
+		]);
+		expect(admissionState).toBe("pending");
+		releaseRun();
+		await run;
+		hook.release();
+		const [accepted] = await Promise.all([scheduled, manual]);
+		expect(accepted).toBe(true);
+		const requestDeadline = Date.now() + 5000;
+		while (requests.length < 3) {
+			if (Date.now() > requestDeadline)
+				throw new Error("scheduled and manual follow-ups did not run");
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		}
+		expect(requests).toEqual(["admission-a", "admission-b", "admission-a"]);
+	} finally {
+		hook.release();
+		releaseRun();
+		if (sessionId) await removeSession(sessionId);
+		hook.remove();
+		runtime.unregisterProvider("scheduled-admission-a");
+		runtime.unregisterProvider("scheduled-admission-b");
+	}
+}, 30000);
+
+test("a scheduled follow-up does not answer a live agent question", async () => {
+	const toolCallId = "scheduled-cannot-answer-question";
+	fauxA.setResponses([
+		gatedQuestionMessage(toolCallId),
+		fauxAssistantMessage("QUESTION_CONTINUED_WITHOUT_SCHEDULED_INPUT"),
+	]);
+	const cwd = tmpCwd("trpi-scheduled-live-question-");
+	const session = await createSession({
+		cwd,
+		workspaceId: "ws-scheduled-live-question",
+		model: toWireModel(fauxA.getModel()),
+	});
+	const prompting = promptSession(session.sessionId, "Ask before continuing.");
+	prompting.catch(() => {});
+	try {
+		await waitForQuestion(session.sessionId);
+		await expect(
+			acceptScheduledFollowUpSession(session.sessionId, "scheduled while waiting"),
+		).rejects.toMatchObject({
+			code: "SCHEDULED_PROMPT_BLOCKED_BY_NEEDS_INPUT",
+			message: "Cannot deliver a scheduled prompt while the session awaits a response.",
+		});
+		expect(getSessionState(session.sessionId).needsInput).toMatchObject({
+			kind: "tool-response",
+			toolCallId,
+		});
+		await respondToTool(session.sessionId, toolCallId, gatedQuestionAnswer());
+		await prompting;
+		expect(seen(session.sessionId)).not.toContain("scheduled while waiting");
+	} finally {
+		if (getSessionState(session.sessionId).needsInput)
+			await respondToTool(session.sessionId, toolCallId, gatedQuestionAnswer()).catch(() => {});
+		await prompting.catch(() => {});
+		if (hasSession(session.sessionId)) await removeSession(session.sessionId);
 	}
 }, 30000);
 

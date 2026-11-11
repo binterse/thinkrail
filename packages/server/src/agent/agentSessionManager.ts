@@ -164,7 +164,8 @@ interface TrackedQueuedMessage {
 
 interface Entry {
 	dequeuedFollowUps: TrackedQueuedMessage[];
-	pendingModelSelection?: PromptModelSelection | undefined;
+	activePromptModelSelection?: PromptModelSelection | undefined;
+	nextPromptModelSelection?: PromptModelSelection | undefined;
 	clearingQueue: boolean;
 	priorFollowUpMode?: "all" | "one-at-a-time" | undefined;
 	subagents: Subagents;
@@ -180,6 +181,7 @@ interface Entry {
 	workspaceId: string;
 	lastSettlement: AgentSettlement | null | undefined;
 	queuedMessages: Record<QueueLane, TrackedQueuedMessage[]>;
+	followUpAdmission: Promise<void>;
 	stuckEmptyDeliveries: Record<QueueLane, number>;
 	nextQueuedMessageId: number;
 	manualCompactionInProgress: boolean;
@@ -589,11 +591,7 @@ export function nudgeSession(
 	if (state.execution === "running" || entry.nudgePromptPending) {
 		return {
 			disposition: "queued",
-			send: async () => {
-				await queueSessionMessage(entry, "followUp", text, images, () =>
-					entry.session.followUp(text, images),
-				);
-			},
+			send: () => followUpEntry(entry, text, images, false),
 		};
 	}
 	entry.nudgePromptPending = true;
@@ -1182,6 +1180,7 @@ async function prepareSessionEntry(
 		workspaceId,
 		lastSettlement,
 		queuedMessages: { steering: [], followUp: [] },
+		followUpAdmission: Promise.resolve(),
 		stuckEmptyDeliveries: { steering: 0, followUp: 0 },
 		nextQueuedMessageId: 1,
 		manualCompactionInProgress: false,
@@ -1241,13 +1240,7 @@ async function prepareSessionEntry(
 				const remaining = new Set(entry.queuedMessages.followUp.map((item) => item.id));
 				entry.dequeuedFollowUps.push(...before.filter((item) => !remaining.has(item.id)));
 			}
-			if (
-				entry.priorFollowUpMode !== undefined &&
-				!entry.queuedMessages.followUp.some((item) => item.modelSelection)
-			) {
-				session.agent.followUpMode = entry.priorFollowUpMode;
-				entry.priorFollowUpMode = undefined;
-			}
+			restorePriorFollowUpMode(entry);
 		}
 		if (event.type === "compaction_start") entry.piCompactionInProgress = true;
 		if (event.type === "compaction_end") {
@@ -1306,18 +1299,21 @@ async function prepareSessionEntry(
 
 	const previousPrepareRequest = session.agent.prepareRequest;
 	session.agent.prepareRequest = async (request, signal) => {
-		const selection = entry.pendingModelSelection;
-		if (selection) {
-			entry.pendingModelSelection = undefined;
-			await applyPromptModelSelection(entry, selection);
-		}
-		return (await previousPrepareRequest?.(request, signal)) ?? undefined;
+		const prepared = (await previousPrepareRequest?.(request, signal)) ?? undefined;
+		const selection = entry.activePromptModelSelection;
+		if (!selection) return prepared;
+		return {
+			...prepared,
+			model: resolveWireModel(entry.generation.runtime, selection.model),
+			thinkingLevel: selection.thinkingLevel,
+		};
 	};
 	const unsubscribeQueueSelection = session.agent.subscribe((event) => {
 		if (event.type === "message_start" && event.message.role === "user") {
 			const text = userContentText(event.message.content);
 			const consumed = entry.dequeuedFollowUps.find((item) => item.text === text);
-			entry.pendingModelSelection = consumed?.modelSelection;
+			entry.activePromptModelSelection = entry.nextPromptModelSelection ?? consumed?.modelSelection;
+			entry.nextPromptModelSelection = undefined;
 			entry.dequeuedFollowUps = [];
 		}
 		if (event.type === "agent_end") entry.dequeuedFollowUps = [];
@@ -2240,6 +2236,16 @@ function synchronizeQueueFromSession(entry: Entry): void {
 	synchronizeQueuedLane(entry, "followUp", displayedLane(entry, "followUp"));
 }
 
+function restorePriorFollowUpMode(entry: Entry): void {
+	if (
+		entry.priorFollowUpMode === undefined ||
+		entry.queuedMessages.followUp.some((message) => message.modelSelection)
+	)
+		return;
+	entry.session.agent.followUpMode = entry.priorFollowUpMode;
+	entry.priorFollowUpMode = undefined;
+}
+
 function laneMessages(entry: Entry, kind: QueueLane): readonly string[] {
 	return kind === "steering"
 		? entry.session.getSteeringMessages()
@@ -2346,6 +2352,130 @@ async function queueSessionMessage<T>(
 		);
 		synchronizeQueueFromSession(entry);
 		throw error;
+	}
+}
+
+interface FollowUpHandoff {
+	disposition: "handled" | "queued" | "started";
+	run: Promise<void>;
+	wasStreaming: boolean;
+}
+
+function stagePromptModelSelection(
+	entry: Entry,
+	selection: PromptModelSelection | undefined,
+): () => void {
+	if (!selection) return () => {};
+	entry.nextPromptModelSelection = selection;
+	return () => {
+		if (entry.nextPromptModelSelection === selection) entry.nextPromptModelSelection = undefined;
+	};
+}
+
+function assertScheduledPromptCanDeliver(entry: Entry): void {
+	if (stateFromEntry(entry).needsInput)
+		throw new CodedError(
+			"SCHEDULED_PROMPT_BLOCKED_BY_NEEDS_INPUT",
+			"Cannot deliver a scheduled prompt while the session awaits a response.",
+		);
+}
+
+async function handOffFollowUp(
+	entry: Entry,
+	text: string,
+	images: ImageContent[] | undefined,
+	answersDialogs: boolean,
+	modelSelection: PromptModelSelection | undefined,
+	rejectHandled = false,
+): Promise<FollowUpHandoff> {
+	const release = admitPreflight(entry);
+	const wasStreaming = entry.session.isStreaming;
+	const tracked: TrackedQueuedMessage = {
+		...(modelSelection ? { modelSelection } : {}),
+		id: entry.nextQueuedMessageId++,
+		text,
+		...(images && images.length > 0 ? { images: [...images] } : {}),
+	};
+	entry.queuedMessages.followUp.push(tracked);
+	if (modelSelection && wasStreaming && entry.priorFollowUpMode === undefined) {
+		entry.priorFollowUpMode = entry.session.agent.followUpMode;
+		entry.session.agent.followUpMode = "one-at-a-time";
+	}
+	const removeTracked = () => {
+		entry.queuedMessages.followUp = entry.queuedMessages.followUp.filter(
+			(message) => message.id !== tracked.id,
+		);
+		synchronizeQueueFromSession(entry);
+		restorePriorFollowUpMode(entry);
+	};
+	try {
+		return await new Promise<FollowUpHandoff>((resolve, reject) => {
+			let settled = false;
+			let run!: Promise<void>;
+			let clearStagedSelection = () => {};
+			const preflightResult: NonNullable<PromptOptions["preflightResult"]> = (disposition) => {
+				if (disposition === "handled") {
+					removeTracked();
+					if (rejectHandled) {
+						settled = true;
+						reject(new Error("Scheduled prompt was handled without a session handoff."));
+						return;
+					}
+				} else if (disposition === "started") {
+					removeTracked();
+					clearStagedSelection = stagePromptModelSelection(entry, modelSelection);
+				} else {
+					synchronizeQueueFromSession(entry);
+				}
+				if (disposition !== "handled" && answersDialogs)
+					cancelExtUiForSession(entry.session.sessionId);
+				settled = true;
+				resolve({ disposition, run, wasStreaming });
+			};
+			try {
+				run = entry.session.prompt(text, {
+					...(images ? { images } : {}),
+					streamingBehavior: "followUp",
+					preflightResult,
+				});
+			} catch (error) {
+				removeTracked();
+				settled = true;
+				reject(error);
+				return;
+			}
+			void run.then(
+				() => {
+					if (settled) return;
+					removeTracked();
+					settled = true;
+					reject(new Error("Follow-up was not accepted by the session."));
+				},
+				(error: unknown) => {
+					if (settled) {
+						clearStagedSelection();
+						return;
+					}
+					removeTracked();
+					settled = true;
+					reject(error);
+				},
+			);
+		});
+	} finally {
+		release();
+	}
+}
+
+async function withFollowUpAdmission<T>(entry: Entry, operation: () => Promise<T>): Promise<T> {
+	const previous = entry.followUpAdmission;
+	let release!: () => void;
+	entry.followUpAdmission = new Promise<void>((resolve) => (release = resolve));
+	await previous;
+	try {
+		return await operation();
+	} finally {
+		release();
 	}
 }
 
@@ -2456,64 +2586,12 @@ export async function acceptScheduledFollowUpSession(
 ): Promise<boolean> {
 	if (modelSelection) validatePromptModelSelection(sessionId, modelSelection);
 	const entry = mustGetEntry(sessionId);
-	admitRun(entry);
-	if (entry.session.isStreaming) {
+	return withFollowUpAdmission(entry, async () => {
 		if (!isCurrent()) return false;
-		if (modelSelection && entry.priorFollowUpMode === undefined) {
-			entry.priorFollowUpMode = entry.session.agent.followUpMode;
-			entry.session.agent.followUpMode = "one-at-a-time";
-		}
-		await queueSessionMessage(
-			entry,
-			"followUp",
-			text,
-			images,
-			() => entry.session.followUp(text, images),
-			modelSelection,
-		);
+		assertScheduledPromptCanDeliver(entry);
+		await handOffFollowUp(entry, text, images, false, modelSelection, true);
 		return true;
-	}
-	const release = admitPreflight(entry);
-	try {
-		if (modelSelection) await applyPromptModelSelection(entry, modelSelection);
-		if (!isCurrent()) return false;
-		await new Promise<void>((resolve, reject) => {
-			let started = false;
-			let subscribed = true;
-			const unsubscribe = entry.session.subscribe((event) => {
-				if (event.type !== "agent_start" || started) return;
-				started = true;
-				subscribed = false;
-				unsubscribe();
-				resolve();
-			});
-			const cleanup = () => {
-				if (!subscribed) return;
-				subscribed = false;
-				unsubscribe();
-			};
-			try {
-				void entry.session.prompt(text, images ? { images } : undefined).then(
-					() => {
-						if (!started) {
-							cleanup();
-							reject(new Error("Scheduled prompt was not accepted by the session."));
-						}
-					},
-					(error: unknown) => {
-						cleanup();
-						if (!started) reject(error);
-					},
-				);
-			} catch (error) {
-				cleanup();
-				reject(error);
-			}
-		});
-		return true;
-	} finally {
-		release();
-	}
+	});
 }
 
 async function followUpEntry(
@@ -2523,33 +2601,10 @@ async function followUpEntry(
 	answersDialogs: boolean,
 	modelSelection?: PromptModelSelection,
 ): Promise<void> {
-	admitRun(entry);
-	if (entry.session.isStreaming) {
-		if (modelSelection && entry.priorFollowUpMode === undefined) {
-			entry.priorFollowUpMode = entry.session.agent.followUpMode;
-			entry.session.agent.followUpMode = "one-at-a-time";
-		}
-		const disposition = await queueSessionMessage(
-			entry,
-			"followUp",
-			text,
-			images,
-			() => entry.session.followUp(text, images),
-			modelSelection,
-		);
-		if (answersDialogs && disposition === "queued") cancelExtUiForSession(entry.session.sessionId);
-		return;
-	}
-	const release = admitPreflight(entry);
-	try {
-		if (modelSelection) await applyPromptModelSelection(entry, modelSelection);
-		await entry.session.prompt(
-			text,
-			answersDialogs ? answeringDialogs(entry, images) : images ? { images } : undefined,
-		);
-	} finally {
-		release();
-	}
+	const handoff = await withFollowUpAdmission(entry, () =>
+		handOffFollowUp(entry, text, images, answersDialogs, modelSelection),
+	);
+	if (!handoff.wasStreaming && handoff.disposition === "started") await handoff.run;
 }
 
 // Callers MUST `ackSend`-wrap this: a pre-turn rejection has to roll the review record back — see submodule-server-todos.
@@ -2609,7 +2664,7 @@ function clearEntryQueue(entry: Entry, requireTextOnly = false): SessionQueueCon
 	} finally {
 		entry.clearingQueue = false;
 		entry.dequeuedFollowUps = [];
-		entry.pendingModelSelection = undefined;
+		entry.nextPromptModelSelection = undefined;
 	}
 	entry.stuckEmptyDeliveries = { steering: 0, followUp: 0 };
 	return content;

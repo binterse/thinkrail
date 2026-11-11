@@ -107,6 +107,15 @@ caused by the requested change, and rerun them without asking for approval at ea
 All runner modes, isolation guarantees, credential handling, cancellation behavior, and debugging
 commands live in `e2e/SPEC.md`; workflow harness details live in `e2e/workflows/SPEC.md`.
 
+## PR destination and CI
+
+- Do not send a PR to `JetBrains/thinkrail` for merge when required checks need a JetBrains maintainer.
+  Keep review and integration on `binterse/thinkrail`; prepare any later upstream PR from current
+  `JetBrains/main` with its workflows intact.
+- On the personal fork, run equivalent local checks first. If GitHub CI blocks review, comment out only
+  the workflow that blocks the flow, describe the skipped check, and restore it before an upstream PR.
+  Leave unrelated workflows enabled.
+
 ## Handoff hygiene
 
 Green gates are necessary but not sufficient:

@@ -26,6 +26,8 @@ the palette ranks with — kept here so host-side search can rank with the same 
   folder already owned by a workspace),
   `PROJECT_CLONE_INVALID`, `PROJECT_CLONE_FAILED`, and `PROJECT_CLONE_CLEANUP_FAILED` (input
   correction, Git failure, and incomplete cleanup requiring filesystem intervention),
+  `SCHEDULED_PROMPT_BLOCKED_BY_NEEDS_INPUT` (a due prompt cannot be delivered while the session awaits
+  the user's response; the scheduled item remains visible for manual handling),
   `RESOURCE_UNAVAILABLE`, and `SUBAGENT_TRANSCRIPT_NOT_FOUND` — the latter is
   `subagent.getTranscript`'s **permanent** miss, the
   signal that stops the transcript dialog's polling. A known child whose first transcript file is not

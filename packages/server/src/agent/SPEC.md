@@ -320,16 +320,13 @@ re-opened transcripts provider-valid.
 
     New-session and pre-session entrypoints capture the current generation; operations on a live session use
     that session's retained runtime. `abort` remains available as the cancellation control path.
-    `prompt`/`steer`/`followUp` (with images; `prompt` and `followUp` may carry a pinned model/reasoning pair) /
-    — **both `promptSession` and `followUpSession` resolve the delivery mode against the session's
-    LIVE `isStreaming`, never the caller's belief about it**: `prompt()` throws mid-turn (so it falls
-    back to `steer`), and pi's `followUp()` only *enqueues* into a queue that a run already in flight
-    drains (so on an idle session it falls back to `prompt`, else the message parks forever — the way a
-    `review.sendBatch` into a re-attached review chat marked its comments sent to an agent that never
-    saw them). A pinned `promptSession` observed during a live turn uses the follow-up lane instead of steer,
-    preserving the selected pair until that separate prompt starts; when idle, it applies the pair before
-    `prompt()`. Pinned follow-ups are consumed one at a time, applying their pair at the provider request
-    boundary. / **`clearQueueSession`** (Pi's `clearQueue()`: drains both queues but returns only text,
+    `prompt`/`steer`/`followUp` (with images; `prompt` and `followUp` may carry a pinned model/reasoning pair).
+    Follow-ups use `session.prompt(..., streamingBehavior: "followUp")` and wait for Pi's preflight
+    result after async input handlers. This lets Pi queue while a turn is active or start the follow-up
+    if that turn settles during a handler. Admission is serialized per session only until Pi accepts the
+    queue entry or starts the run; it never waits for the model run to finish. Pinned selections remain
+    attached to queued messages and apply at the provider request boundary. / **`clearQueueSession`**
+    (Pi's `clearQueue()`: drains both queues but returns only text,
     while the host snapshots its reconciled transient mirror first and returns complete per-message text +
     images + any pinned model selection. Pi emits the emptying `queue_update`). Its optional text-only precondition rejects before
     touching Pi whenever either tracked lane has queued images; manual compaction uses that guard, while
