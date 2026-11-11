@@ -57,6 +57,7 @@ import {
 	listAvailableModels,
 	listSessionStates,
 	listSessions,
+	liveParentContext,
 	markWorkspaceRead,
 	markWorkspaceUnread,
 	nudgeSession,
@@ -4578,6 +4579,113 @@ test("a pending scheduled follow-up keeps its model pin when a manual follow-up 
 	}
 }, 30000);
 
+test("scheduled follow-up metadata survives a queue update during async preflight", async () => {
+	const a = createFauxCore({
+		provider: "scheduled-queue-race-a",
+		api: "scheduled-queue-race-a",
+		models: [modelDef("queue-race-a")],
+		tokensPerSecond: 100,
+	});
+	const b = createFauxCore({
+		provider: "scheduled-queue-race-b",
+		api: "scheduled-queue-race-b",
+		models: [{ ...modelDef("queue-race-b"), reasoning: true }],
+		tokensPerSecond: 100,
+	});
+	const requests: string[] = [];
+	const config = (core: ReturnType<typeof createFauxCore>, model: string) => ({
+		...cfg(core, model),
+		models: [{ ...modelDef(model), reasoning: true, api: core.api }],
+		streamSimple: (...args: Parameters<typeof core.streamSimple>) => {
+			requests.push(args[0].id);
+			return core.streamSimple(...args);
+		},
+	});
+	runtime.registerProvider("scheduled-queue-race-a", config(a, "queue-race-a"));
+	runtime.registerProvider("scheduled-queue-race-b", config(b, "queue-race-b"));
+	let releaseInitial!: () => void;
+	const initialGate = new Promise<void>((resolve) => (releaseInitial = resolve));
+	let initialStarted!: () => void;
+	const initialRequest = new Promise<void>((resolve) => (initialStarted = resolve));
+	let releaseOlder!: () => void;
+	const olderGate = new Promise<void>((resolve) => (releaseOlder = resolve));
+	let olderStarted!: () => void;
+	const olderRequest = new Promise<void>((resolve) => (olderStarted = resolve));
+	a.setResponses([
+		async () => {
+			initialStarted();
+			await initialGate;
+			return fauxAssistantMessage("INITIAL_DONE");
+		},
+		async () => {
+			olderStarted();
+			await olderGate;
+			return fauxAssistantMessage("OLDER_DONE");
+		},
+	]);
+	b.setResponses([fauxAssistantMessage("SCHEDULED_DONE")]);
+	const hook = installStalledInputHook("scheduled-queue-race", "scheduled B");
+	const image = { type: "image", data: "AA==", mimeType: "image/png" } satisfies ImageContent;
+	const selection = {
+		model: { provider: "scheduled-queue-race-b", id: "queue-race-b" },
+		thinkingLevel: "high" as const,
+	};
+	const session = await createSession({
+		cwd: tmpCwd("trpi-scheduled-queue-race-"),
+		workspaceId: "ws-scheduled-queue-race",
+		model: toWireModel(a.getModel()),
+	});
+	let run: Promise<void> | undefined;
+	try {
+		run = promptSession(session.sessionId, "initial");
+		run.catch(() => {});
+		await initialRequest;
+		await followUpSession(session.sessionId, "older queued follow-up");
+		const scheduled = acceptScheduledFollowUpSession(
+			session.sessionId,
+			"scheduled B",
+			[image],
+			selection,
+		);
+		const hookDeadline = Date.now() + 5000;
+		while (!existsSync(hook.startedPath)) {
+			if (Date.now() > hookDeadline) throw new Error("scheduled input hook did not pause");
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		}
+
+		releaseInitial();
+		await olderRequest;
+		hook.release();
+		expect(await scheduled).toBe(true);
+		const removed = await removeQueuedSession(session.sessionId, "followUp", 0);
+		expect(removed.removed).toEqual({
+			text: "scheduled B",
+			images: [image],
+			modelSelection: selection,
+		});
+		if (!removed.removed) throw new Error("The scheduled message was not in Pi's queue");
+		await followUpSession(
+			session.sessionId,
+			removed.removed.text,
+			removed.removed.images ? [...removed.removed.images] : undefined,
+			removed.removed.modelSelection,
+		);
+		releaseOlder();
+		await run;
+		expect(requests).toEqual(["queue-race-a", "queue-race-a", "queue-race-b"]);
+		expect(seen(session.sessionId)).toContain("SCHEDULED_DONE");
+	} finally {
+		hook.release();
+		releaseInitial();
+		releaseOlder();
+		await run?.catch(() => {});
+		if (hasSession(session.sessionId)) await removeSession(session.sessionId);
+		hook.remove();
+		runtime.unregisterProvider("scheduled-queue-race-a");
+		runtime.unregisterProvider("scheduled-queue-race-b");
+	}
+}, 30000);
+
 test("steering during a pinned follow-up keeps that model for the rest of the run", async () => {
 	const a = createFauxCore({
 		provider: "scheduled-steer-a",
@@ -4648,6 +4756,10 @@ test("steering during a pinned follow-up keeps that model for the rest of the ru
 		).toBe(true);
 		releaseInitial();
 		await pinnedRequest;
+		expect(liveParentContext(session.sessionId)).toMatchObject({
+			model: { provider: "scheduled-steer-b", id: "steer-b" },
+			thinkingLevel: "high",
+		});
 		await steerSession(session.sessionId, "steer the pinned run");
 		releasePinned();
 		await run;
@@ -4657,6 +4769,10 @@ test("steering during a pinned follow-up keeps that model for the rest of the ru
 			{ provider: "scheduled-steer-b", model: "steer-b", reasoning: "high" },
 		]);
 		expect(seen(session.sessionId)).toContain("PINNED_AFTER_STEER");
+		expect(liveParentContext(session.sessionId)).toMatchObject({
+			model: { provider: "scheduled-steer-a", id: "steer-a" },
+			thinkingLevel: "off",
+		});
 	} finally {
 		releaseInitial();
 		releasePinned();

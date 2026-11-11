@@ -324,9 +324,12 @@ re-opened transcripts provider-valid.
     Follow-ups use `session.prompt(..., streamingBehavior: "followUp")` and wait for Pi's preflight
     result after async input handlers. This lets Pi queue while a turn is active or start the follow-up
     if that turn settles during a handler. Admission is serialized per session only until Pi accepts the
-    queue entry or starts the run; it never waits for the model run to finish. Pinned selections remain
-    attached to queued messages and apply at the provider request boundary through steering messages in
-    the same run; an unpinned queued prompt or final `agent_settled` clears the selection. /
+    queue entry or starts the run; it never waits for the model run to finish. Pending admission metadata
+    stays separate from Pi's queue mirror until the accepted entry appears there, so intermediate queue
+    updates cannot discard its images or model selection. Pinned selections remain attached to queued
+    messages and apply at the provider request boundary through steering messages in the same run; the
+    live parent projection exposes the active pair so delegated children inherit it. An unpinned queued
+    prompt or final `agent_settled` clears the selection. /
     **`clearQueueSession`**
     (Pi's `clearQueue()`: drains both queues but returns only text,
     while the host snapshots its reconciled transient mirror first and returns complete per-message text +
