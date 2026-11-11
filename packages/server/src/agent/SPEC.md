@@ -338,12 +338,16 @@ re-opened transcripts provider-valid.
     result after async input handlers. This lets Pi queue while a turn is active or start the follow-up
     if that turn settles during a handler. Admission is serialized per session only until Pi accepts the
     queue entry or starts the run; it never waits for the model run to finish. Pending admission metadata
-    stays separate from Pi's queue mirror until the accepted entry appears there, so intermediate queue
-    updates cannot discard or misattribute its images or model selection. A pinned `promptSession` during
-    a live turn uses the follow-up lane instead of steer; pinned selections remain attached per message and
-    apply at the provider request boundary through steering messages in the same run. The live parent
-    projection exposes the active pair so delegated children inherit it. An unpinned queued prompt or final
-    `agent_settled` clears the selection. /
+    stays separate from Pi's queue mirror until accepted entries appear, so intermediate updates cannot
+    discard or misattribute their images or model selection. A scoped freshness guard checks after async
+    input handlers and at the direct run boundary, so cancelled or rescheduled delivery is not handed to Pi.
+    The guard compensates for Pi's non-cancellable preflight; its removal gate is in [[pi-compatibility]].
+    The host matches accepted input-handler transformations against Pi's queued text, retaining
+    associated images and model selection. A pinned `promptSession` during a live turn uses the follow-up
+    lane instead of steer; pinned selections remain attached per message and apply at the provider request
+    boundary without changing session defaults, and remain active through steering messages in the same run.
+    The live parent projection exposes the active pair so delegated children inherit it. An unpinned queued
+    prompt or final `agent_settled` clears the selection. /
     **`clearQueueSession`**
     (Pi's `clearQueue()`: drains both queues but returns only text,
     while the host snapshots its reconciled transient mirror first and returns complete per-message text +

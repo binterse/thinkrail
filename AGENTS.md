@@ -51,8 +51,10 @@ Clear, fractal module boundaries are a top-priority requirement:
 - `pi` owns state. The host exposes what pi reports rather than recomputing cost, stats, or state.
 - Streaming semantics: `text_delta` / `thinking_delta` append;
   `tool_execution_update.partialResult` replaces.
-- `prompt()` throws while a session is streaming; use `steer()` / `followUp()`. Forward errors through
-  the event stream and thrown method result rather than treating them as a crash signal.
+- `prompt()` throws while a session is streaming unless given an explicit `streamingBehavior`; ordinary
+  callers use `steer()` / `followUp()`. Scheduled delivery uses `prompt(..., streamingBehavior: "followUp")`
+  to retain Pi's input pipeline and accepted-delivery signal. Forward errors through the event stream and
+  thrown method result rather than treating them as a crash signal.
 - Automatic work ends at `agent_settled`, never `agent_end`; retries, compaction, recovery, or queued
   continuations may follow an attempt-level `agent_end`.
 - UI panels are layout-agnostic; the shell arranges them.

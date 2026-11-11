@@ -1,8 +1,14 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createReadStream, existsSync, rmSync, statSync, truncateSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
-import { clampThinkingLevel, getSupportedThinkingLevels, type Usage } from "@earendil-works/pi-ai";
+import {
+	clampThinkingLevel,
+	getSupportedThinkingLevels,
+	type ImageContent as PiImageContent,
+	type Usage,
+} from "@earendil-works/pi-ai";
 import {
 	type AgentSession,
 	type CreateAgentSessionOptions,
@@ -21,6 +27,7 @@ import {
 	type SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import type {
+	AgentMessage,
 	AgentSettlement,
 	ImageContent,
 	Model,
@@ -1387,6 +1394,11 @@ async function prepareSessionEntry(
 				entry.pendingFollowUpAdmissions.delete(pending.id);
 				entry.acceptedFollowUpAdmissions.delete(pending.id);
 			}
+			entry.dequeuedSteering = [];
+			entry.dequeuedFollowUps = [];
+		}
+		if (event.type === "agent_end") {
+			entry.dequeuedSteering = [];
 			entry.dequeuedFollowUps = [];
 		}
 	});
@@ -2449,6 +2461,70 @@ interface FollowUpHandoff {
 	wasStreaming: boolean;
 }
 
+interface ScheduledPromptPreflight {
+	current: () => boolean;
+	inputChecked: boolean;
+}
+
+const scheduledPromptPreflight = new AsyncLocalStorage<ScheduledPromptPreflight>();
+
+function installScheduledPromptPreflight(entry: Entry): () => void {
+	const runner = entry.session.extensionRunner;
+	const originalHasHandlers = runner.hasHandlers;
+	const originalEmitInput = runner.emitInput;
+	const emitInput = originalEmitInput.bind(runner);
+	const guardedHasHandlers: typeof runner.hasHandlers = (eventType) =>
+		originalHasHandlers.call(runner, eventType) ||
+		(eventType === "input" && scheduledPromptPreflight.getStore()?.inputChecked === false);
+	const guardedEmitInput: typeof runner.emitInput = async (...args) => {
+		const guard = scheduledPromptPreflight.getStore();
+		const scheduledInput = guard !== undefined && !guard.inputChecked && args[2] === "interactive";
+		if (scheduledInput) guard.inputChecked = true;
+		const result = await emitInput(...args);
+		return guard && scheduledInput && !guard.current() ? { action: "handled" } : result;
+	};
+	const agent = entry.session.agent;
+	const originalAgentPrompt = agent.prompt;
+	const agentPrompt = originalAgentPrompt.bind(agent);
+	function guardedAgentPrompt(message: AgentMessage | AgentMessage[]): Promise<void>;
+	function guardedAgentPrompt(input: string, images?: PiImageContent[]): Promise<void>;
+	function guardedAgentPrompt(
+		input: string | AgentMessage | AgentMessage[],
+		images?: PiImageContent[],
+	): Promise<void> {
+		const guard = scheduledPromptPreflight.getStore();
+		if (guard && !guard.current()) return Promise.resolve();
+		return typeof input === "string" ? agentPrompt(input, images) : agentPrompt(input);
+	}
+	runner.hasHandlers = guardedHasHandlers;
+	runner.emitInput = guardedEmitInput;
+	agent.prompt = guardedAgentPrompt;
+	return () => {
+		if (runner.hasHandlers === guardedHasHandlers) runner.hasHandlers = originalHasHandlers;
+		if (runner.emitInput === guardedEmitInput) runner.emitInput = originalEmitInput;
+		if (agent.prompt === guardedAgentPrompt) agent.prompt = originalAgentPrompt;
+	};
+}
+
+function stagePromptModelSelection(
+	entry: Entry,
+	selection: PromptModelSelection | undefined,
+): () => void {
+	if (!selection) return () => {};
+	entry.nextPromptModelSelection = selection;
+	return () => {
+		if (entry.nextPromptModelSelection === selection) entry.nextPromptModelSelection = undefined;
+	};
+}
+
+function assertScheduledPromptCanDeliver(entry: Entry): void {
+	if (stateFromEntry(entry).needsInput)
+		throw new CodedError(
+			"SCHEDULED_PROMPT_BLOCKED_BY_NEEDS_INPUT",
+			"Cannot deliver a scheduled prompt while the session awaits a response.",
+		);
+}
+
 async function handOffFollowUp(
 	entry: Entry,
 	text: string,
@@ -2456,8 +2532,10 @@ async function handOffFollowUp(
 	answersDialogs: boolean,
 	modelSelection: PromptModelSelection | undefined,
 	rejectHandled = false,
+	isCurrent?: () => boolean,
 ): Promise<FollowUpHandoff> {
 	const release = admitPreflight(entry);
+	const restorePreflight = rejectHandled ? installScheduledPromptPreflight(entry) : () => {};
 	const wasStreaming = entry.session.isStreaming;
 	const tracked: TrackedQueuedMessage = {
 		...(modelSelection ? { modelSelection } : {}),
@@ -2489,14 +2567,23 @@ async function handOffFollowUp(
 					removeTracked();
 					if (rejectHandled) {
 						settled = true;
-						reject(new Error("Scheduled prompt was handled without a session handoff."));
+						if (isCurrent && !isCurrent()) resolve({ disposition, run, wasStreaming });
+						else reject(new Error("Scheduled prompt was handled without a session handoff."));
 						return;
 					}
 				} else if (disposition === "started") {
+					if (rejectHandled && isCurrent && !isCurrent()) {
+						removeTracked();
+						settled = true;
+						resolve({ disposition, run, wasStreaming });
+						return;
+					}
 					removeTracked();
 					clearStagedSelection = stagePromptModelSelection(entry, modelSelection);
 				} else {
 					const hadQueuedImages = hasQueuedImages(entry);
+					const acceptedText = laneMessages(entry, "followUp").at(-1);
+					if (acceptedText !== undefined) tracked.text = acceptedText;
 					entry.acceptedFollowUpAdmissions.add(tracked.id);
 					synchronizeQueueFromSession(entry);
 					clearMirroredFollowUpAdmissions(entry);
@@ -2505,7 +2592,18 @@ async function handOffFollowUp(
 						hasQueuedImages(entry) &&
 						sessions.get(entry.session.sessionId) === entry
 					) {
-						publish({ sessionId: entry.session.sessionId, event: queueUpdateEventOf(entry) });
+						publish(
+							{
+								sessionId: entry.session.sessionId,
+								event: {
+									type: "queue_update",
+									steering: [...laneMessages(entry, "steering")],
+									followUp: [...laneMessages(entry, "followUp")],
+									hasImages: true,
+								},
+							},
+							entry.workspaceId,
+						);
 						publishEntryState(entry);
 					}
 				}
@@ -2515,11 +2613,17 @@ async function handOffFollowUp(
 				resolve({ disposition, run, wasStreaming });
 			};
 			try {
-				run = entry.session.prompt(text, {
+				const promptOptions: PromptOptions = {
 					...(images ? { images } : {}),
 					streamingBehavior: "followUp",
 					preflightResult,
-				});
+				};
+				run =
+					rejectHandled && isCurrent
+						? scheduledPromptPreflight.run({ current: isCurrent, inputChecked: false }, () =>
+								entry.session.prompt(text, promptOptions),
+							)
+						: entry.session.prompt(text, promptOptions);
 			} catch (error) {
 				removeTracked();
 				settled = true;
@@ -2545,6 +2649,7 @@ async function handOffFollowUp(
 			);
 		});
 	} finally {
+		restorePreflight();
 		release();
 	}
 }
@@ -2592,14 +2697,12 @@ export async function promptSession(
 		await steerEntry(entry, text, images);
 		return;
 	}
-	const release = admitPreflight(entry);
 	const clearStagedSelection = stagePromptModelSelection(entry, modelSelection);
+	const release = admitPreflight(entry);
 	try {
 		await entry.session.prompt(text, answeringDialogs(entry, images, opts.onPreflight));
-	} catch (error) {
-		clearStagedSelection();
-		throw error;
 	} finally {
+		clearStagedSelection();
 		release();
 	}
 }
@@ -2648,25 +2751,6 @@ export function validatePromptModelSelection(
 		throw new Error("Unsupported reasoning level for scheduled model.");
 }
 
-function stagePromptModelSelection(
-	entry: Entry,
-	selection: PromptModelSelection | undefined,
-): () => void {
-	if (!selection) return () => {};
-	entry.nextPromptModelSelection = selection;
-	return () => {
-		if (entry.nextPromptModelSelection === selection) entry.nextPromptModelSelection = undefined;
-	};
-}
-
-function assertScheduledPromptCanDeliver(entry: Entry): void {
-	if (stateFromEntry(entry).needsInput)
-		throw new CodedError(
-			"SCHEDULED_PROMPT_BLOCKED_BY_NEEDS_INPUT",
-			"Cannot deliver scheduled prompt while the session awaits a response.",
-		);
-}
-
 export async function scheduleFollowUpSession(
 	sessionId: string,
 	text: string,
@@ -2689,8 +2773,18 @@ export async function acceptScheduledFollowUpSession(
 	return withFollowUpAdmission(entry, async () => {
 		if (!isCurrent()) return false;
 		assertScheduledPromptCanDeliver(entry);
-		await handOffFollowUp(entry, text, images, false, modelSelection, true);
-		return true;
+		const canDeliver = () =>
+			isCurrent() && sessions.get(sessionId) === entry && !stateFromEntry(entry).needsInput;
+		const handoff = await handOffFollowUp(
+			entry,
+			text,
+			images,
+			false,
+			modelSelection,
+			true,
+			canDeliver,
+		);
+		return handoff.disposition !== "handled" && canDeliver();
 	});
 }
 
