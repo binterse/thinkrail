@@ -10,6 +10,8 @@ session state.
 - Use `architecture.md` for system topology, cross-module decisions, and repo-wide invariants.
 - For a pi upgrade or a host workaround around pi, read `pi-compatibility.md`: verify every applicable
   removal gate against the installed SDK, update the registry, and report what was removed or retained.
+  An Electrobun upgrade or a host workaround around Electrobun/Hutch does the same with
+  `electrobun-compatibility.md`.
 - Read the owning `SPEC.md` when work is governed by or may alter a module boundary, contract,
   invariant, documented behavior, or architecture decision.
 - Localized work does not require unrelated specs or a full repository map.
@@ -107,6 +109,17 @@ caused by the requested change, and rerun them without asking for approval at ea
 All runner modes, isolation guarantees, credential handling, cancellation behavior, and debugging
 commands live in `e2e/SPEC.md`; workflow harness details live in `e2e/workflows/SPEC.md`.
 
+## PR destination and CI
+
+- Use `binterse/thinkrail` for review when `JetBrains/thinkrail` requires a maintainer to authorize
+  CI. Base its review PR on a branch synchronized with upstream, preserving fork-only commits, so
+  upstream drift does not appear as feature changes. Open an upstream PR only when its required
+  checks can run through the normal contribution path.
+- On the personal fork, run equivalent local checks first. If CI itself blocks review, comment out
+  only the blocking workflow in the feature branch and clearly report which check was skipped.
+  Restore it before proposing the branch to `JetBrains/thinkrail`; never change upstream workflows
+  to bypass approval.
+
 ## Handoff hygiene
 
 Green gates are necessary but not sufficient:
@@ -138,7 +151,7 @@ Green gates are necessary but not sufficient:
 ## Stack
 
 Bun + Turbo monorepo · TypeScript strict · React 19 + Zustand + Tailwind v4 · in-process `pi`
-(Node >= 22.19). App state lives under `~/.thinkrail`.
+(Node >= 22.23.4 for development; `pi` itself needs >= 22.19). App state lives under `~/.thinkrail`.
 
 Dependencies pin exact versions. Cross-cutting dependencies are pinned once in the root
 `workspaces.catalog` and referenced through `catalog:`; peer dependencies and local protocols are the

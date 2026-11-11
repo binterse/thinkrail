@@ -30,7 +30,7 @@ file manager.
   (worktreePath)` opens the OS's own file manager there: `open` (macOS), `explorer` (Windows), `xdg-open`
   (Linux desktop default) — fire-and-forget, so `explorer`'s well-known nonzero-on-success exit is never
   inspected. `openFileInVsCode(path)` reuses VS Code detection and reports unavailable vs launch failure
-  with distinct wire codes. `openWithDefaultApp(path)` delegates to the OS association by argv (Windows
+  as `FILE_ACTION_UNAVAILABLE` / `FILE_ACTION_FAILED`. `openWithDefaultApp(path)` delegates to the OS association by argv (Windows
   uses Explorer, which applies the registered file association), and `revealPath(path)` selects the explicit
   target (`open -R`, `explorer /select, <path>`, or the containing directory with `xdg-open`); on Windows,
   the switch and path are separate argv entries so paths with spaces remain intact, and these Explorer
