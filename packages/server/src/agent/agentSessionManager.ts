@@ -18,6 +18,7 @@ import {
 	type ExtensionFactory,
 	type ExtensionUIContext,
 	getAgentDir,
+	type InputEventResult,
 	type McpServerConfig,
 	type PromptOptions,
 	type RegisteredMcpServer,
@@ -2465,6 +2466,7 @@ interface ScheduledPromptPreflight {
 	current: () => boolean;
 	inputChecked: boolean;
 	skipInputHandlers?: boolean;
+	onTransform?: (result: Extract<InputEventResult, { action: "transform" }>) => void;
 }
 
 const scheduledPromptPreflight = new AsyncLocalStorage<ScheduledPromptPreflight>();
@@ -2494,6 +2496,7 @@ function installScheduledPromptPreflight(entry: Entry): () => void {
 		const scheduledInput = guard !== undefined && !guard.inputChecked && args[2] === "interactive";
 		if (scheduledInput) guard.inputChecked = true;
 		const result = await emitInput(...args);
+		if (guard && scheduledInput && result.action === "transform") guard.onTransform?.(result);
 		return guard && scheduledInput && !guard.current() ? { action: "handled" } : result;
 	};
 	const agent = entry.session.agent;
@@ -2549,8 +2552,12 @@ async function handOffFollowUp(
 	skipInputHandlers = false,
 ): Promise<FollowUpHandoff> {
 	const release = admitPreflight(entry);
+	const captureInputTransform =
+		!skipInputHandlers && entry.session.extensionRunner.hasHandlers("input");
 	const restorePreflight =
-		rejectHandled || skipInputHandlers ? installScheduledPromptPreflight(entry) : () => {};
+		rejectHandled || skipInputHandlers || captureInputTransform
+			? installScheduledPromptPreflight(entry)
+			: () => {};
 	const wasStreaming = entry.session.isStreaming;
 	const tracked: TrackedQueuedMessage = {
 		...(modelSelection ? { modelSelection } : {}),
@@ -2634,12 +2641,21 @@ async function handOffFollowUp(
 					preflightResult,
 				};
 				run =
-					rejectHandled || skipInputHandlers
+					rejectHandled || skipInputHandlers || captureInputTransform
 						? scheduledPromptPreflight.run(
 								{
 									current: isCurrent ?? (() => true),
 									inputChecked: false,
 									...(skipInputHandlers ? { skipInputHandlers: true } : {}),
+									...(!skipInputHandlers
+										? {
+												onTransform: (result) => {
+													tracked.text = result.text;
+													if (result.images?.length) tracked.images = [...result.images];
+													else delete tracked.images;
+												},
+											}
+										: {}),
 								},
 								() => entry.session.prompt(text, promptOptions),
 							)

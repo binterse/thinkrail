@@ -343,12 +343,12 @@ re-opened transcripts provider-valid.
     discard or misattribute images or model selection. A scoped freshness guard checks after async input
     handlers and at the direct run boundary, so cancelled or rescheduled delivery is not handed to Pi.
     The guard compensates for Pi's non-cancellable preflight; its removal gate is in [[pi-compatibility]].
-    The host matches accepted input-handler transformations against Pi's queued text, retaining associated
-    images and model selection. A pinned `promptSession` during a live turn uses the follow-up lane instead
-    of steer; pinned selections stay per prompt, apply at the provider request boundary without changing
-    session defaults, and remain active through steering messages in the same run. The live parent projection
-    exposes the active pair so delegated children inherit it. An unpinned queued prompt or final
-    `agent_settled` clears the selection. /
+    The host captures the final text and image set from input-handler transformations and attaches them to
+    accepted queue entries with their model selection. A pinned `promptSession` during a live turn uses the
+    follow-up lane instead of steer; pinned selections stay per prompt, apply at the provider request boundary
+    without changing session defaults, and remain active through steering messages in the same run. The live
+    parent projection exposes the active pair so delegated children inherit it. An unpinned queued prompt or
+    final `agent_settled` clears the selection. /
     **`clearQueueSession`**
     (Pi's `clearQueue()`: drains both queues but returns only text,
     while the host snapshots its reconciled transient mirror first and returns complete per-message text +

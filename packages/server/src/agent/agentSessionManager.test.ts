@@ -326,6 +326,31 @@ function installAppendingInputTransformer(name: string, prefix: string, suffix: 
 	return { remove: () => rmSync(extensionPath, { force: true }) };
 }
 
+function installReplacingInputImagesTransformer(
+	name: string,
+	prefix: string,
+	images: ImageContent[],
+) {
+	const agentDir = process.env.PI_CODING_AGENT_DIR;
+	if (!agentDir) throw new Error("agent dir not isolated");
+	const extensionPath = join(agentDir, "extensions", `${name}.ts`);
+	mkdirSync(dirname(extensionPath), { recursive: true });
+	writeFileSync(
+		extensionPath,
+		[
+			'import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";',
+			"export default function (pi: ExtensionAPI) {",
+			'\tpi.on("input", (event) => {',
+			`\t\tif (!event.text.startsWith(${JSON.stringify(prefix)})) return;`,
+			`\t\treturn { action: "transform", text: event.text + "!", images: ${JSON.stringify(images)} };`,
+			"\t});",
+			"}",
+			"",
+		].join("\n"),
+	);
+	return { remove: () => rmSync(extensionPath, { force: true }) };
+}
+
 function installStalledInputHook(name: string, marker: string, occurrence = 1) {
 	const agentDir = process.env.PI_CODING_AGENT_DIR;
 	if (!agentDir) throw new Error("agent dir not isolated");
@@ -5384,6 +5409,71 @@ test("restoring an accepted queued prompt does not transform it again", async ()
 		if (hasSession(session.sessionId)) await removeSession(session.sessionId);
 		hook.remove();
 		runtime.unregisterProvider("scheduled-restore-transform");
+	}
+}, 30000);
+
+test("restoring an accepted queued prompt keeps images transformed by its input handler", async () => {
+	const core = createFauxCore({
+		provider: "scheduled-restore-image-transform",
+		api: "scheduled-restore-image-transform",
+		models: [modelDef("scheduled-restore-image-transform")],
+		tokensPerSecond: 100,
+	});
+	runtime.registerProvider(
+		"scheduled-restore-image-transform",
+		cfg(core, "scheduled-restore-image-transform"),
+	);
+	let releaseInitial!: () => void;
+	const initialGate = new Promise<void>((resolve) => (releaseInitial = resolve));
+	let initialStarted!: () => void;
+	const initialRequest = new Promise<void>((resolve) => (initialStarted = resolve));
+	core.setResponses([
+		async () => {
+			initialStarted();
+			await initialGate;
+			return fauxAssistantMessage("INITIAL_DONE");
+		},
+	]);
+	const originalImage = {
+		type: "image",
+		data: "AA==",
+		mimeType: "image/png",
+	} satisfies ImageContent;
+	const acceptedImage = {
+		type: "image",
+		data: "AQ==",
+		mimeType: "image/png",
+	} satisfies ImageContent;
+	const hook = installReplacingInputImagesTransformer(
+		"scheduled-restore-image-transform",
+		"scheduled prompt",
+		[acceptedImage],
+	);
+	const session = await createSession({
+		cwd: tmpCwd("trpi-scheduled-restore-image-transform-"),
+		workspaceId: "ws-scheduled-restore-image-transform",
+		model: toWireModel(core.getModel()),
+	});
+	let run: Promise<void> | undefined;
+	try {
+		run = promptSession(session.sessionId, "initial");
+		run.catch(() => {});
+		await initialRequest;
+		await followUpSession(session.sessionId, "scheduled prompt", [originalImage]);
+		await followUpSession(session.sessionId, "remove me");
+		const removed = await removeQueuedSession(session.sessionId, "followUp", 1);
+		expect(removed.removed?.text).toBe("remove me");
+		expect(clearQueueSession(session.sessionId).followUp).toEqual([
+			{ text: "scheduled prompt!", images: [acceptedImage] },
+		]);
+		releaseInitial();
+		await run;
+	} finally {
+		releaseInitial();
+		await run?.catch(() => {});
+		if (hasSession(session.sessionId)) await removeSession(session.sessionId);
+		hook.remove();
+		runtime.unregisterProvider("scheduled-restore-image-transform");
 	}
 }, 30000);
 
