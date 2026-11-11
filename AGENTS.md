@@ -109,12 +109,14 @@ commands live in `e2e/SPEC.md`; workflow harness details live in `e2e/workflows/
 
 ## PR destination and CI
 
-- Do not send a PR to `JetBrains/thinkrail` for merge when required checks need a JetBrains maintainer.
-  Keep review and integration on `binterse/thinkrail`; prepare any later upstream PR from current
-  `JetBrains/main` with its workflows intact.
-- On the personal fork, run equivalent local checks first. If GitHub CI blocks review, comment out only
-  the workflow that blocks the flow, describe the skipped check, and restore it before an upstream PR.
-  Leave unrelated workflows enabled.
+- Keep review and integration for this work on `binterse/thinkrail`. Do not target
+  `JetBrains/thinkrail` for a merge when its required checks need a JetBrains maintainer; if newer
+  upstream changes are needed, integrate current `JetBrains/main` into the fork branch and validate
+  there first.
+- The personal fork has no JetBrains maintainer gate. Run equivalent local checks there. If GitHub CI
+  itself blocks review or merge on the fork, comment out only the blocking workflow and describe the
+  skipped check. Leave unrelated workflows enabled, and restore the workflow before any upstream PR so
+  JetBrains CI remains intact.
 
 ## Handoff hygiene
 
