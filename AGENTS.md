@@ -113,10 +113,10 @@ commands live in `e2e/SPEC.md`; workflow harness details live in `e2e/workflows/
 
 ## PR destination and CI
 
-- Use `binterse/thinkrail` for review when `JetBrains/thinkrail` requires a maintainer to authorize
-  CI. Base its review PR on a branch synchronized with upstream, preserving fork-only commits, so
-  upstream drift does not appear as feature changes. Open an upstream PR only when its required
-  checks can run through the normal contribution path.
+- Keep changes and review on `binterse/thinkrail`; never push or merge directly into the maintainer's
+  `JetBrains/thinkrail` repository. If an upstream contribution is wanted, synchronize the feature
+  branch with current upstream, preserve fork-only commits, and open a PR for maintainer review. Do not
+  bypass the upstream contribution path or its CI approval.
 - On the personal fork, run equivalent local checks first. If CI itself blocks review, comment out
   only the blocking workflow in the feature branch and clearly report which check was skipped.
   Restore it before proposing the branch to `JetBrains/thinkrail`; never change upstream workflows
