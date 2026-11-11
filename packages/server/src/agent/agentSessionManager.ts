@@ -182,6 +182,7 @@ interface Entry {
 	lastSettlement: AgentSettlement | null | undefined;
 	queuedMessages: Record<QueueLane, TrackedQueuedMessage[]>;
 	pendingFollowUpAdmissions: Map<number, TrackedQueuedMessage>;
+	acceptedFollowUpAdmissions: Set<number>;
 	followUpAdmission: Promise<void>;
 	stuckEmptyDeliveries: Record<QueueLane, number>;
 	nextQueuedMessageId: number;
@@ -1182,6 +1183,7 @@ async function prepareSessionEntry(
 		lastSettlement,
 		queuedMessages: { steering: [], followUp: [] },
 		pendingFollowUpAdmissions: new Map(),
+		acceptedFollowUpAdmissions: new Set(),
 		followUpAdmission: Promise.resolve(),
 		stuckEmptyDeliveries: { steering: 0, followUp: 0 },
 		nextQueuedMessageId: 1,
@@ -1320,14 +1322,17 @@ async function prepareSessionEntry(
 			const text = userContentText(event.message.content);
 			const consumed = entry.dequeuedFollowUps.find((item) => item.text === text);
 			const pending = [...entry.pendingFollowUpAdmissions.values()].find(
-				(item) => item.text === text,
+				(item) => entry.acceptedFollowUpAdmissions.has(item.id) && item.text === text,
 			);
 			if (entry.nextPromptModelSelection !== undefined)
 				entry.activePromptModelSelection = entry.nextPromptModelSelection;
 			else if (consumed !== undefined) entry.activePromptModelSelection = consumed.modelSelection;
 			else if (pending !== undefined) entry.activePromptModelSelection = pending.modelSelection;
 			entry.nextPromptModelSelection = undefined;
-			if (pending) entry.pendingFollowUpAdmissions.delete(pending.id);
+			if (pending) {
+				entry.pendingFollowUpAdmissions.delete(pending.id);
+				entry.acceptedFollowUpAdmissions.delete(pending.id);
+			}
 			entry.dequeuedFollowUps = [];
 		}
 		if (event.type === "agent_end") entry.dequeuedFollowUps = [];
@@ -2224,16 +2229,22 @@ export async function respondToTool(
 
 function synchronizeQueuedLane(entry: Entry, kind: QueueLane, texts: readonly string[]): void {
 	const current = entry.queuedMessages[kind];
-	const pending = kind === "followUp" ? [...entry.pendingFollowUpAdmissions.values()] : [];
+	const pending =
+		kind === "followUp"
+			? [...entry.pendingFollowUpAdmissions.values()].filter((message) =>
+					entry.acceptedFollowUpAdmissions.has(message.id),
+				)
+			: [];
 	const candidates = [...current, ...pending];
 	const reconciled: TrackedQueuedMessage[] = [];
 	let candidateIndex = candidates.length - 1;
 	for (let textIndex = texts.length - 1; textIndex >= 0; textIndex--) {
 		const text = texts[textIndex];
 		if (text === undefined) continue;
-		while (candidateIndex >= 0 && candidates[candidateIndex]?.text !== text) candidateIndex--;
-		const tracked = candidateIndex >= 0 ? candidates[candidateIndex] : undefined;
-		if (tracked) candidateIndex--;
+		let searchIndex = candidateIndex;
+		while (searchIndex >= 0 && candidates[searchIndex]?.text !== text) searchIndex--;
+		const tracked = searchIndex >= 0 ? candidates[searchIndex] : undefined;
+		if (tracked) candidateIndex = searchIndex - 1;
 		reconciled.unshift(tracked ?? { id: entry.nextQueuedMessageId++, text });
 	}
 	entry.queuedMessages[kind] = reconciled;
@@ -2241,8 +2252,11 @@ function synchronizeQueuedLane(entry: Entry, kind: QueueLane, texts: readonly st
 
 function clearMirroredFollowUpAdmissions(entry: Entry): void {
 	const mirrored = new Set(entry.queuedMessages.followUp.map((message) => message.id));
-	for (const id of entry.pendingFollowUpAdmissions.keys())
-		if (mirrored.has(id)) entry.pendingFollowUpAdmissions.delete(id);
+	for (const id of entry.acceptedFollowUpAdmissions)
+		if (mirrored.has(id)) {
+			entry.pendingFollowUpAdmissions.delete(id);
+			entry.acceptedFollowUpAdmissions.delete(id);
+		}
 }
 
 function synchronizeQueueFromSession(entry: Entry): void {
@@ -2418,6 +2432,7 @@ async function handOffFollowUp(
 	}
 	const removeTracked = () => {
 		entry.pendingFollowUpAdmissions.delete(tracked.id);
+		entry.acceptedFollowUpAdmissions.delete(tracked.id);
 		entry.queuedMessages.followUp = entry.queuedMessages.followUp.filter(
 			(message) => message.id !== tracked.id,
 		);
@@ -2441,8 +2456,18 @@ async function handOffFollowUp(
 					removeTracked();
 					clearStagedSelection = stagePromptModelSelection(entry, modelSelection);
 				} else {
+					const hadQueuedImages = hasQueuedImages(entry);
+					entry.acceptedFollowUpAdmissions.add(tracked.id);
 					synchronizeQueueFromSession(entry);
 					clearMirroredFollowUpAdmissions(entry);
+					if (
+						!hadQueuedImages &&
+						hasQueuedImages(entry) &&
+						sessions.get(entry.session.sessionId) === entry
+					) {
+						publish({ sessionId: entry.session.sessionId, event: queueUpdateEventOf(entry) });
+						publishEntryState(entry);
+					}
 				}
 				if (disposition !== "handled" && answersDialogs)
 					cancelExtUiForSession(entry.session.sessionId);

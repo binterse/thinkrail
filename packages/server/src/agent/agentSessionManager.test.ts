@@ -215,7 +215,33 @@ function installInputSwallower(name: string, marker: string): { remove: () => vo
 	return { remove: () => rmSync(extensionPath, { force: true }) };
 }
 
-function installStalledInputHook(name: string, marker: string) {
+function installUntrackedFollowUpHook(
+	name: string,
+	trigger: string,
+	text: string,
+): { remove: () => void } {
+	const agentDir = process.env.PI_CODING_AGENT_DIR;
+	if (!agentDir) throw new Error("agent dir not isolated");
+	const extensionPath = join(agentDir, "extensions", `${name}.ts`);
+	mkdirSync(dirname(extensionPath), { recursive: true });
+	writeFileSync(
+		extensionPath,
+		[
+			'import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";',
+			"export default function (pi: ExtensionAPI) {",
+			'\tpi.on("input", async (event) => {',
+			`\t\tif (event.text !== ${JSON.stringify(trigger)}) return;`,
+			`\t\tawait pi.sendUserMessage(${JSON.stringify(text)}, { deliverAs: "followUp" });`,
+			'\t\treturn { action: "handled" };',
+			"\t});",
+			"}",
+			"",
+		].join("\n"),
+	);
+	return { remove: () => rmSync(extensionPath, { force: true }) };
+}
+
+function installStalledInputHook(name: string, marker: string, occurrence = 1) {
 	const agentDir = process.env.PI_CODING_AGENT_DIR;
 	if (!agentDir) throw new Error("agent dir not isolated");
 	const controlDir = tmpCwd(`trpi-${name}-`);
@@ -230,8 +256,10 @@ function installStalledInputHook(name: string, marker: string) {
 			'import { setTimeout as sleep } from "node:timers/promises";',
 			'import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";',
 			"export default function (pi: ExtensionAPI) {",
+			"\tlet matches = 0;",
 			'\tpi.on("input", async (event) => {',
 			`\t\tif (!event.text.includes(${JSON.stringify(marker)})) return;`,
+			`\t\tif (++matches !== ${occurrence}) return;`,
 			`\t\twriteFileSync(${JSON.stringify(startedPath)}, "");`,
 			`\t\twhile (!existsSync(${JSON.stringify(releasePath)})) await sleep(2);`,
 			"\t});",
@@ -4683,6 +4711,169 @@ test("scheduled follow-up metadata survives a queue update during async prefligh
 		hook.remove();
 		runtime.unregisterProvider("scheduled-queue-race-a");
 		runtime.unregisterProvider("scheduled-queue-race-b");
+	}
+}, 30000);
+
+test("identical queued text does not consume pending scheduled metadata before admission", async () => {
+	const a = createFauxCore({
+		provider: "scheduled-identical-a",
+		api: "scheduled-identical-a",
+		models: [{ ...modelDef("identical-a"), reasoning: true }],
+		tokensPerSecond: 100,
+	});
+	const b = createFauxCore({
+		provider: "scheduled-identical-b",
+		api: "scheduled-identical-b",
+		models: [{ ...modelDef("identical-b"), reasoning: true }],
+		tokensPerSecond: 100,
+	});
+	const requests: string[] = [];
+	const config = (core: ReturnType<typeof createFauxCore>, model: string) => ({
+		...cfg(core, model),
+		models: [{ ...modelDef(model), reasoning: true, api: core.api }],
+		streamSimple: (...args: Parameters<typeof core.streamSimple>) => {
+			requests.push(args[0].id);
+			return core.streamSimple(...args);
+		},
+	});
+	runtime.registerProvider("scheduled-identical-a", config(a, "identical-a"));
+	runtime.registerProvider("scheduled-identical-b", config(b, "identical-b"));
+	let releaseInitial!: () => void;
+	const initialGate = new Promise<void>((resolve) => (releaseInitial = resolve));
+	let initialStarted!: () => void;
+	const initialRequest = new Promise<void>((resolve) => (initialStarted = resolve));
+	a.setResponses([
+		async () => {
+			initialStarted();
+			await initialGate;
+			return fauxAssistantMessage("INITIAL_DONE");
+		},
+	]);
+	b.setResponses([fauxAssistantMessage("SCHEDULED_DONE")]);
+	const hook = installStalledInputHook("scheduled-identical", "same queued prompt", 2);
+	const image = { type: "image", data: "AA==", mimeType: "image/png" } satisfies ImageContent;
+	const selection = {
+		model: { provider: "scheduled-identical-b", id: "identical-b" },
+		thinkingLevel: "high" as const,
+	};
+	const session = await createSession({
+		cwd: tmpCwd("trpi-scheduled-identical-"),
+		workspaceId: "ws-scheduled-identical",
+		model: toWireModel(a.getModel()),
+	});
+	let run: Promise<void> | undefined;
+	let scheduled: Promise<boolean> | undefined;
+	try {
+		run = promptSession(session.sessionId, "initial");
+		run.catch(() => {});
+		await initialRequest;
+		await followUpSession(session.sessionId, "same queued prompt");
+		scheduled = acceptScheduledFollowUpSession(
+			session.sessionId,
+			"same queued prompt",
+			[image],
+			selection,
+		);
+		const hookDeadline = Date.now() + 5000;
+		while (!existsSync(hook.startedPath)) {
+			if (Date.now() > hookDeadline) throw new Error("scheduled input hook did not pause");
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		}
+		await steerSession(session.sessionId, "nonmatching queue update");
+		const cleared = clearQueueSession(session.sessionId);
+		expect(cleared.followUp).toEqual([{ text: "same queued prompt" }]);
+		hook.release();
+		expect(await scheduled).toBe(true);
+		releaseInitial();
+		await run;
+		expect(requests).toEqual(["identical-a", "identical-b"]);
+	} finally {
+		releaseInitial();
+		hook.release();
+		if (hasSession(session.sessionId)) await removeSession(session.sessionId);
+		await run?.catch(() => {});
+		hook.remove();
+		runtime.unregisterProvider("scheduled-identical-a");
+		runtime.unregisterProvider("scheduled-identical-b");
+	}
+}, 30000);
+
+test("queue reconciliation retains tracked metadata before an untracked follow-up", async () => {
+	const a = createFauxCore({
+		provider: "scheduled-untracked-a",
+		api: "scheduled-untracked-a",
+		models: [modelDef("untracked-a")],
+		tokensPerSecond: 100,
+	});
+	const b = createFauxCore({
+		provider: "scheduled-untracked-b",
+		api: "scheduled-untracked-b",
+		models: [{ ...modelDef("untracked-b"), reasoning: true }],
+		tokensPerSecond: 100,
+	});
+	let releaseInitial!: () => void;
+	const initialGate = new Promise<void>((resolve) => (releaseInitial = resolve));
+	let initialStarted!: () => void;
+	const initialRequest = new Promise<void>((resolve) => (initialStarted = resolve));
+	runtime.registerProvider("scheduled-untracked-a", {
+		...cfg(a, "untracked-a"),
+		streamSimple: (...args: Parameters<typeof a.streamSimple>) => {
+			initialStarted();
+			return a.streamSimple(...args);
+		},
+	});
+	runtime.registerProvider("scheduled-untracked-b", {
+		...cfg(b, "untracked-b"),
+		models: [{ ...modelDef("untracked-b"), reasoning: true, api: b.api }],
+	});
+	a.setResponses([
+		async () => {
+			await initialGate;
+			return fauxAssistantMessage("INITIAL_DONE");
+		},
+	]);
+	const hook = installUntrackedFollowUpHook(
+		"scheduled-untracked-follow-up",
+		"trigger extension follow-up",
+		"untracked follow-up",
+	);
+	const image = { type: "image", data: "AA==", mimeType: "image/png" } satisfies ImageContent;
+	const selection = {
+		model: { provider: "scheduled-untracked-b", id: "untracked-b" },
+		thinkingLevel: "high" as const,
+	};
+	const session = await createSession({
+		cwd: tmpCwd("trpi-scheduled-untracked-"),
+		workspaceId: "ws-scheduled-untracked",
+		model: toWireModel(a.getModel()),
+	});
+	let run: Promise<void> | undefined;
+	try {
+		run = promptSession(session.sessionId, "initial");
+		run.catch(() => {});
+		await initialRequest;
+		await followUpSession(session.sessionId, "tracked follow-up", [image], selection);
+		await followUpSession(session.sessionId, "trigger extension follow-up");
+		const queueEvents = (events.get(session.sessionId) ?? []).filter(
+			(event): event is { type: string; followUp?: string[] } =>
+				typeof event === "object" &&
+				event !== null &&
+				"type" in event &&
+				event.type === "queue_update",
+		);
+		expect(queueEvents.at(-1)?.followUp).toEqual(["tracked follow-up", "untracked follow-up"]);
+		const cleared = clearQueueSession(session.sessionId);
+		expect(cleared.followUp).toEqual([
+			{ text: "tracked follow-up", images: [image], modelSelection: selection },
+			{ text: "untracked follow-up" },
+		]);
+	} finally {
+		releaseInitial();
+		if (hasSession(session.sessionId)) await removeSession(session.sessionId);
+		await run?.catch(() => {});
+		hook.remove();
+		runtime.unregisterProvider("scheduled-untracked-a");
+		runtime.unregisterProvider("scheduled-untracked-b");
 	}
 }, 30000);
 
