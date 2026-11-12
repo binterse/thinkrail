@@ -12,14 +12,16 @@ import {
 	ContextMenuContent,
 	ContextMenuItem,
 	ContextMenuTrigger,
+	openContextMenuFromKeyboard,
 } from "@thinkrail/ui/context-menu";
 import { LoadingRegion } from "@thinkrail/ui/skeleton";
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactElement, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { statusLetter } from "../chat/planView";
-import { copyText, firstClickOnly } from "../lib";
+import { copyText, firstClickOnly, joinWorkspacePath } from "../lib";
 import {
 	selectFilesTreeView,
 	selectSupportsFileActions,
+	selectWorkspaceById,
 	type TabIntent,
 	toast,
 	useAppStore,
@@ -105,6 +107,12 @@ export function FileTree({
 			const target = payload as { workspaceId?: unknown; path?: unknown };
 			if (target.workspaceId !== workspaceId || typeof target.path !== "string") return;
 
+			if (id === "copyRelativePath") {
+				void copyText(target.path).then((copied) => {
+					if (isCurrentMenu(menuId) && !copied) toast.error(t("panels.fileTree.copyFailed"));
+				});
+				return;
+			}
 			if (id === "copyPath") {
 				const prepared = preparedPathInfo.current;
 				const pathInfo =
@@ -292,6 +300,12 @@ function FileNodeRow({
 						iconPngLight: FILE_ACTION_ICON_PNGS.copyPath.light,
 						iconPngDark: FILE_ACTION_ICON_PNGS.copyPath.dark,
 					},
+					{
+						id: "copyRelativePath",
+						label: t("panels.fileTree.copyRelativePath"),
+						iconPngLight: FILE_ACTION_ICON_PNGS.copyPath.light,
+						iconPngDark: FILE_ACTION_ICON_PNGS.copyPath.dark,
+					},
 				],
 				payload: { workspaceId, path: contextPath },
 			})
@@ -397,21 +411,7 @@ function FileNodeRow({
 				if (open) setContextMenuGeneration((generation) => generation + 1);
 			}}
 		>
-			<ContextMenuTrigger
-				asChild
-				onKeyDown={(event) => {
-					if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
-					event.preventDefault();
-					const rect = event.currentTarget.getBoundingClientRect();
-					event.currentTarget.dispatchEvent(
-						new MouseEvent("contextmenu", {
-							bubbles: true,
-							clientX: rect.left,
-							clientY: rect.bottom,
-						}),
-					);
-				}}
-			>
+			<ContextMenuTrigger asChild onKeyDown={openContextMenuFromKeyboard}>
 				{treeRow}
 			</ContextMenuTrigger>
 			<ContextMenuContent data-testid="file-actions">
@@ -444,12 +444,19 @@ function FileNodeRow({
 					)}
 				</ContextMenuItem>
 				<ContextMenuItem
-					data-testid="file-menu-copy-path"
+					data-testid="file-copy-path"
 					disabled={resolvedPath === null}
 					onSelect={copyAbsolutePath}
 				>
 					<Copy />
-					{t("panels.fileTree.copyAbsolutePath")}
+					<span data-testid="file-menu-copy-path">{t("panels.fileTree.copyAbsolutePath")}</span>
+				</ContextMenuItem>
+				<ContextMenuItem
+					data-testid="file-copy-relative-path"
+					onSelect={() => void copyText(contextPath)}
+				>
+					<Copy />
+					{t("panels.fileTree.copyRelativePath")}
 				</ContextMenuItem>
 			</ContextMenuContent>
 		</ContextMenu>
@@ -458,7 +465,15 @@ function FileNodeRow({
 	);
 	return (
 		<li>
-			{fileActionMenu}
+			{showRadixFileMenu ? (
+				fileActionMenu
+			) : usesNativeContextMenu ? (
+				treeRow
+			) : (
+				<FileTreeMenu workspaceId={workspaceId} path={directory?.path ?? node.path}>
+					{treeRow}
+				</FileTreeMenu>
+			)}
 			{isDir && expanded && children && (
 				<ul className="flex flex-col pl-tree-indent">
 					{children.map((child) => (
@@ -479,5 +494,38 @@ function FileNodeRow({
 				</ul>
 			)}
 		</li>
+	);
+}
+
+function FileTreeMenu({
+	workspaceId,
+	path,
+	children,
+}: {
+	workspaceId: string;
+	path: string;
+	children: ReactElement;
+}) {
+	const t = useT();
+	const copyPath = (absolute: boolean) => {
+		const worktreePath = selectWorkspaceById(useAppStore.getState(), workspaceId)?.worktreePath;
+		void copyText(absolute ? joinWorkspacePath(worktreePath ?? "", path) : path);
+	};
+	return (
+		<ContextMenu>
+			<ContextMenuTrigger asChild onKeyDown={openContextMenuFromKeyboard}>
+				{children}
+			</ContextMenuTrigger>
+			<ContextMenuContent data-testid="file-tree-actions">
+				<ContextMenuItem data-testid="file-copy-path" onSelect={() => copyPath(true)}>
+					<Copy />
+					{t("panels.fileTree.copyPath")}
+				</ContextMenuItem>
+				<ContextMenuItem data-testid="file-copy-relative-path" onSelect={() => copyPath(false)}>
+					<Copy />
+					{t("panels.fileTree.copyRelativePath")}
+				</ContextMenuItem>
+			</ContextMenuContent>
+		</ContextMenu>
 	);
 }
