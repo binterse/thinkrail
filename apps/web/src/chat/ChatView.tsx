@@ -20,7 +20,15 @@ import {
 	DialogFooter,
 	DialogTitle,
 } from "@thinkrail/ui/dialog";
-import { useCallback, useEffect, useInsertionEffect, useMemo, useRef, useState } from "react";
+import {
+	useCallback,
+	useEffect,
+	useInsertionEffect,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useNow } from "@/components/useNow";
 import { type ParsedTemplate, templateToSlashCommand, useTemplateCommandPicker } from "@/prompt";
@@ -108,6 +116,7 @@ export default function ChatView({
 		(s) => awaitingToolCallIdOf(s.sessions[sessionId]?.hostState ?? null) != null,
 	);
 	const draft = useAppStore((s) => s.sessions[sessionId]?.draft ?? "");
+	const composerEdit = useAppStore((s) => s.sessions[sessionId]?.composerEdit ?? null);
 	const imageDraft = useAppStore(
 		(s) => s.sessions[sessionId]?.promptImages ?? EMPTY_RUNTIME.promptImages,
 	);
@@ -801,6 +810,13 @@ export default function ChatView({
 		if (historyOverlayOpen) cycleScope();
 		else composerRef.current?.openHistory();
 	}, [historyOpenRequest, sessionId, historyOverlayOpen, cycleScope]);
+
+	useLayoutEffect(() => {
+		const composer = composerRef.current;
+		if (!composerEdit || !composer) return;
+		composer.applyEdit(composerEdit.kind, composerEdit.text);
+		useAppStore.getState().consumeComposerEdit(sessionId, composerEdit.id);
+	}, [composerEdit, sessionId]);
 
 	const composerFocusRequested = useAppStore((s) =>
 		selectComposerFocusRequested(s, workspaceId, sessionId),

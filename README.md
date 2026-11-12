@@ -51,6 +51,7 @@ For latest version, see the [Releases page](https://github.com/JetBrains/thinkra
   * Once a GitHub PR is open, ThinkRail shows its CI checks and review decision, and lets you mark it ready, merge it, reopen it, or delete the remote branch.
 
 - **An IDE around the agent.** ThinkRail comes with Monaco editor tabs, a file tree integrated with git to show code changes as they happen, terminals, and document support. On Windows desktop, right-click a file or folder in Files → All to open it in VS Code, its default app, or Explorer, or copy its absolute path.
+  Rendered Markdown previews have a heading outline that follows the section you're reading; hide it or move it to either side.
 
 - **Powerful chat features.** You can open several concurrent work sessions per workspace, each with its own model. Send a prompt, schedule it for later, or queue it as a follow-up; delegate to subagents and work together on a shared plan that the agent updates for you to review and edit.
 
@@ -81,7 +82,7 @@ For latest version, see the [Releases page](https://github.com/JetBrains/thinkra
 
 For this checkout's Windows build, canonical profile and backups, see [LOCAL-BUILD.md](LOCAL-BUILD.md).
 
-- **Your language.** ThinkRail uses your system language or a language you pick in Settings → Language: English, Japanese, Russian, Simplified Chinese, or Spanish. You can add a language ThinkRail doesn't ship yet by putting a translated locale file, for example `de.json`, in `~/.thinkrail/locales`. (Tell your AI agent to do it for you!)
+- **Your language.** ThinkRail uses your system language or a language you pick in Settings → Language: English, Japanese, Russian, Simplified Chinese, Spanish, or Traditional Chinese (Taiwan). You can add a language ThinkRail doesn't ship yet by putting a translated locale file, for example `de.json`, in `~/.thinkrail/locales`. (Tell your AI agent to do it for you!)
 
 - **Your themes.** In Settings → Appearance, you can choose from dark, light, minimal, and high-contrast themes. You can also make your own theme by copying a bundled `*.theme.json`, changing its id and colors, and saving it to `~/.thinkrail/themes`. (Again, tell your AI agent to do it for you!)
 

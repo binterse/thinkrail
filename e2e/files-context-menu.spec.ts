@@ -51,10 +51,11 @@ async function selectItem(page: Page, row: Locator, id: string, menuId: string) 
 
 function expectOrderedItems(contribution: NativeContextMenuContribution) {
 	const labels = contribution.items.map((item) => item.label);
-	expect(labels).toHaveLength(4);
+	expect(labels).toHaveLength(5);
 	expect(labels.slice(0, 2)).toEqual(["Open in VS Code", "Open with Default App"]);
 	expect(labels[2]).toMatch(/^Reveal in (Windows Explorer|File Manager)$/);
 	expect(labels[3]).toBe("Copy Absolute Path");
+	expect(labels[4]).toBe("Copy relative path");
 	for (const item of contribution.items) {
 		for (const icon of [item.iconPngLight, item.iconPngDark]) {
 			const bytes = Buffer.from(icon, "base64");
@@ -127,6 +128,10 @@ test("Files All contributes ordered native actions for files and compact folders
 	await expect(page.getByTestId("file-actions")).toHaveCount(0);
 	await selectItem(page, compactFolder, "copyPath", folderMenuId);
 	await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(deepFolder);
+	await selectItem(page, compactFolder, "copyRelativePath", folderMenuId);
+	await expect
+		.poll(() => page.evaluate(() => navigator.clipboard.readText()))
+		.toBe(folderContribution.payload.path);
 	if (activeTabBefore === null) await expect(activeTab).toHaveCount(0);
 	else await expect(activeTab).toHaveText(activeTabBefore);
 
@@ -187,12 +192,13 @@ test("browser renderer keeps the existing Files action-menu fallback", async ({ 
 		"Open with Default App",
 		/Reveal in (Windows Explorer|File Manager)/,
 		"Copy Absolute Path",
+		"Copy relative path",
 	]);
 	await page.keyboard.press("Escape");
 	await expect(readme).toBeFocused();
 	await readme.press("Shift+F10");
 	await expect(menu).toBeVisible();
-	await expect(menu.locator('[role="menuitem"]')).toHaveCount(4);
+	await expect(menu.locator('[role="menuitem"]')).toHaveCount(5);
 	await page.keyboard.press("Escape");
 	await expect(readme).toBeFocused();
 });
