@@ -58,10 +58,11 @@ bundled into `apps/web`. Exposed through explicit subpath exports, not a barrel.
   caller reading binary child output the UTF-8 decoder would replace — stderr stays decoded text, since a
   diagnostic is only ever read as text) and
   `spawnDetached()` (fire-and-forget `unref`) over `Bun.spawnSync` / `Bun.spawn`, hiding child windows by
-  default. A caller may set `windowsHide: false` when launching a GUI shell target that must become visible;
+  default. A caller may set `windowsHide: false` for a GUI app whose own window should be visible;
   console children stay hidden unless explicitly overridden. Bun 1.4.0 maps this option to libuv
-  `UV_PROCESS_WINDOWS_HIDE`. The two bespoke bounded runners (`server/subprocess` `runBounded`, `jbcentral`'s
-  version/quota runner) set it directly.
+  `UV_PROCESS_WINDOWS_HIDE`, and the seam prevents background console spawns from omitting it. The two
+  bespoke bounded runners (`server/subprocess` `runBounded`, `jbcentral`'s version/quota runner) set it
+  directly.
 - **Allowed deps:** Bun/Node runtime (`@types/bun`); `contracts` **types** (`JbcentralInstall`, the wire shape `jbcentralInstall`
   returns — kept in the wire so the server can carry it to the card verbatim); the icon generator's
   build-only `@resvg/resvg-js` and `resedit`.

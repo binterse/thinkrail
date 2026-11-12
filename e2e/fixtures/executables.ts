@@ -4,13 +4,16 @@ import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { LOGIN_ENV_MARKER } from "@thinkrail/shared/shellEnv";
 
-export function resolveBunExecutable(env: NodeJS.ProcessEnv = process.env): string {
-	const name = process.platform === "win32" ? "bun.exe" : "bun";
-	const executable = (env.PATH ?? "")
+function findOnPath(name: string, env: NodeJS.ProcessEnv): string | undefined {
+	return (env.PATH ?? "")
 		.split(delimiter)
 		.filter(Boolean)
 		.map((directory) => join(directory, name))
 		.find(existsSync);
+}
+
+export function resolveBunExecutable(env: NodeJS.ProcessEnv = process.env): string {
+	const executable = findOnPath(process.platform === "win32" ? "bun.exe" : "bun", env);
 	if (!executable) throw new Error("bun executable not found for the e2e host");
 	return executable;
 }
@@ -26,12 +29,6 @@ export function writeFakeCentral(fakeBinDir: string): void {
 	const target = join(fakeBinDir, "central");
 	copyFileSync(source, target);
 	chmodSync(target, 0o755);
-}
-
-export function writeFakeGit(fakeBinDir: string): void {
-	if (process.platform !== "win32") return;
-	const git = resolveWindowsGitExecutable();
-	writeFileSync(join(fakeBinDir, "git.cmd"), `@echo off\r\n"${git}" %*\r\n`);
 }
 
 export function runFakeCentral(fakeBinDir: string, argv: string[], env: NodeJS.ProcessEnv): void {
@@ -61,44 +58,60 @@ function resolveGitBashExecutable(): string {
 }
 
 function resolveWindowsGitExecutable(): string {
-	const git = (process.env.PATH ?? "")
-		.split(delimiter)
-		.filter(Boolean)
-		.map((directory) => join(directory, "git.exe"))
-		.find(existsSync);
+	const git = executableOnPath(process.env.PATH ?? "", "git.exe");
 	if (!git) throw new Error("Git is required to locate the E2E Central shell on Windows");
 	return git;
 }
 
-export function hermeticE2ePath(fakeBinDir: string): string {
+function executableSuffixes(env: NodeJS.ProcessEnv): string[] {
+	if (process.platform !== "win32") return [""];
+	return ["", ...(env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean)];
+}
+
+export function executableOnPath(
+	path: string,
+	name: string,
+	env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+	const suffixes = executableSuffixes(env);
+	return path
+		.split(delimiter)
+		.filter(Boolean)
+		.flatMap((directory) => suffixes.map((suffix) => join(directory, name + suffix)))
+		.find(existsSync);
+}
+
+const FAKED_TOOLS = ["pi", "central", "code"];
+
+export function hermeticE2ePath(fakeBinDir: string, env: NodeJS.ProcessEnv = process.env): string {
 	if (process.platform !== "win32") {
 		return [fakeBinDir, "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(delimiter);
 	}
 
-	const gitExecutable = (process.env.PATH ?? "")
-		.split(delimiter)
-		.filter(Boolean)
-		.map((directory) => join(directory, "git.exe"))
-		.find(existsSync);
-	const systemRoot = process.env.SystemRoot ?? "C:\\Windows";
-	const windowsPaths = [join(systemRoot, "System32")];
-	if (gitExecutable) {
-		let gitRoot = dirname(gitExecutable);
-		for (let depth = 0; depth < 4; depth++) {
-			if (existsSync(join(gitRoot, "mingw64", "bin")) && existsSync(join(gitRoot, "usr", "bin"))) {
-				break;
-			}
-			const parent = dirname(gitRoot);
-			if (parent === gitRoot) break;
-			gitRoot = parent;
+	const git = executableOnPath(env.PATH ?? "", "git.exe", env);
+	if (!git) throw new Error("git executable not found for the e2e host");
+	const systemRoot = env.SystemRoot ?? env.SYSTEMROOT ?? "C:\\Windows";
+	let gitRoot = dirname(git);
+	for (let depth = 0; depth < 4; depth++) {
+		if (existsSync(join(gitRoot, "mingw64", "bin")) && existsSync(join(gitRoot, "usr", "bin"))) {
+			break;
 		}
-		windowsPaths.unshift(
-			dirname(gitExecutable),
-			join(gitRoot, "mingw64", "bin"),
-			join(gitRoot, "usr", "bin"),
-		);
+		const parent = dirname(gitRoot);
+		if (parent === gitRoot) break;
+		gitRoot = parent;
 	}
-	return [fakeBinDir, ...new Set(windowsPaths)].join(delimiter);
+	const ambient = [
+		dirname(git),
+		join(gitRoot, "mingw64", "bin"),
+		join(gitRoot, "usr", "bin"),
+		join(systemRoot, "System32"),
+		systemRoot,
+	].join(delimiter);
+	for (const tool of FAKED_TOOLS) {
+		const real = executableOnPath(ambient, tool, env);
+		if (real) throw new Error(`e2e host PATH would expose a real ${tool}: ${real}`);
+	}
+	return [fakeBinDir, ambient].join(delimiter);
 }
 
 export function hermeticE2eShell(fakeBinDir: string): string {
