@@ -14,12 +14,7 @@ import {
 	waitForCentralTarget,
 	writeE2eAgentSettings,
 } from "./fixtures/centralAgent";
-import {
-	writeFakeCentral,
-	writeFakeGh,
-	writeFakeGit,
-	writeHermeticE2eShell,
-} from "./fixtures/executables";
+import { writeFakeCentral, writeFakeGh, writeHermeticE2eShell } from "./fixtures/executables";
 import {
 	E2E_CENTRAL_BAD_EXTENSION_SOURCE,
 	E2E_CENTRAL_EXTENSION_SOURCE,
@@ -37,6 +32,7 @@ import {
 } from "./fixtures/paths";
 import { seedFixtureRepo } from "./fixtures/repo";
 import { seedExternalCwdSessions } from "./fixtures/sessions";
+import { seedSpeechFixture } from "./fixtures/speech";
 import { seedTemplateFixtures } from "./fixtures/templates";
 import { E2eWire } from "./fixtures/wire";
 
@@ -85,7 +81,6 @@ export default function globalSetup(config?: FullConfig): void | Promise<void> {
 			chmodSync(target, 0o755);
 		}
 		writeFakeCentral(E2E_FAKE_BIN_DIR);
-		writeFakeGit(E2E_FAKE_BIN_DIR);
 		writeHermeticE2eShell(E2E_FAKE_BIN_DIR, process.env.SHELL ?? "/bin/bash");
 		writeFakeGh(E2E_FAKE_BIN_DIR, E2E_GH_SCENARIO, E2E_GH_LOG);
 		copyFileSync(
@@ -113,6 +108,7 @@ export default function globalSetup(config?: FullConfig): void | Promise<void> {
 		seedFixtureRepo();
 		writeFileSync(E2E_PICK_DIR_POINTER, E2E_FIXTURE_REPO);
 		writeFileSync(E2E_INSTALLED_FONTS, "[]");
+		seedSpeechFixture();
 	} catch (error) {
 		if (!centralMode) throw error;
 		removeTree(E2E_DATA_DIR);
