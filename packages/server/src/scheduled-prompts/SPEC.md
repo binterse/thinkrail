@@ -18,10 +18,12 @@ The index.ts barrel exposes schedule create, list, update, cancel and send-now o
 due-time validation, and host start/stop hooks. Allowed dependencies are contracts and the
 agent, persistence and workspaces sibling barrels. No browser or alternate agent runtime is owned here.
 
-Times are absolute instants. Due prompts are serialized per session only until Pi accepts the
-follow-up handoff; an idle session is accepted at `agent_start`, so a long run never holds the global
-timer or another session's deliveries. Due prompts enter Pi's existing follow-up lane in due-time,
-then latest-save order (old records use creation time and id). Edits assign a new durable save order.
+Times are absolute instants. Due prompts are serialized per session only until Pi's prompt preflight
+reports a queued follow-up or a started run, after async input handlers. If the active run settles while
+a handler is pending, Pi starts the follow-up instead of leaving it parked. Delivery never waits for a
+model run to finish, so one chat cannot block another. Due prompts enter Pi's existing follow-up lane
+in due-time, then latest-save order (old records use creation time and id). Edits assign a new durable
+save order. A session awaiting a user response rejects delivery and leaves the scheduled record visible.
 A delivery whose result is uncertain is retained as failed for manual resolution and is never retried
 automatically.
 

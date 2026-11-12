@@ -1,8 +1,14 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createReadStream, existsSync, rmSync, statSync, truncateSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
-import { clampThinkingLevel, getSupportedThinkingLevels, type Usage } from "@earendil-works/pi-ai";
+import {
+	clampThinkingLevel,
+	getSupportedThinkingLevels,
+	type ImageContent as PiImageContent,
+	type Usage,
+} from "@earendil-works/pi-ai";
 import {
 	type AgentSession,
 	type CreateAgentSessionOptions,
@@ -12,6 +18,7 @@ import {
 	type ExtensionFactory,
 	type ExtensionUIContext,
 	getAgentDir,
+	type InputEventResult,
 	type McpServerConfig,
 	type PromptOptions,
 	type RegisteredMcpServer,
@@ -21,9 +28,11 @@ import {
 	type SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import type {
+	AgentMessage,
 	AgentSettlement,
 	ImageContent,
 	Model,
+	PiEvent,
 	PromptModelSelection,
 	QueuedMessageContent,
 	QueueLane,
@@ -184,6 +193,7 @@ interface PendingHostMessage {
 }
 
 interface Entry {
+	dequeuedSteering: TrackedQueuedMessage[];
 	dequeuedFollowUps: TrackedQueuedMessage[];
 	activePromptModelSelection?: PromptModelSelection | undefined;
 	nextPromptModelSelection?: PromptModelSelection | undefined;
@@ -202,7 +212,9 @@ interface Entry {
 	workspaceId: string;
 	lastSettlement: AgentSettlement | null | undefined;
 	queuedMessages: Record<QueueLane, TrackedQueuedMessage[]>;
-	followUpAdmission: Promise<void>;
+	pendingFollowUpAdmissions: Map<number, TrackedQueuedMessage>;
+	acceptedFollowUpAdmissions: Set<number>;
+	promptAdmission: Promise<void>;
 	nextQueuedMessageId: number;
 	hostMessages: PendingHostMessage[];
 	manualCompactionInProgress: boolean;
@@ -1238,6 +1250,7 @@ async function prepareSessionEntry(
 	const { sessionId } = session;
 	let terminal: AgentSettlement | null = null;
 	const entry: Entry = {
+		dequeuedSteering: [],
 		dequeuedFollowUps: [],
 		clearingQueue: false,
 		commands,
@@ -1251,7 +1264,9 @@ async function prepareSessionEntry(
 		workspaceId,
 		lastSettlement,
 		queuedMessages: { steering: [], followUp: [] },
-		followUpAdmission: Promise.resolve(),
+		pendingFollowUpAdmissions: new Map(),
+		acceptedFollowUpAdmissions: new Set(),
+		promptAdmission: Promise.resolve(),
 		nextQueuedMessageId: 1,
 		hostMessages: [],
 		manualCompactionInProgress: false,
@@ -1299,13 +1314,22 @@ async function prepareSessionEntry(
 			entry.hostMessages = entry.hostMessages.filter((message) => message.details !== details);
 		}
 		if (event.type === "queue_update") {
+			const beforeSteering = [...entry.queuedMessages.steering];
 			synchronizeQueuedLane(entry, "steering", event.steering);
+			if (!entry.clearingQueue) {
+				const remaining = new Set(entry.queuedMessages.steering.map((item) => item.id));
+				entry.dequeuedSteering.push(...beforeSteering.filter((item) => !remaining.has(item.id)));
+			}
 			const before = [...entry.queuedMessages.followUp];
+			const pendingAdmissions = new Set(entry.pendingFollowUpAdmissions.keys());
 			synchronizeQueuedLane(entry, "followUp", event.followUp);
 			if (!entry.clearingQueue) {
 				const remaining = new Set(entry.queuedMessages.followUp.map((item) => item.id));
-				entry.dequeuedFollowUps.push(...before.filter((item) => !remaining.has(item.id)));
+				entry.dequeuedFollowUps.push(
+					...before.filter((item) => !remaining.has(item.id) && !pendingAdmissions.has(item.id)),
+				);
 			}
+			clearMirroredFollowUpAdmissions(entry);
 			restorePriorFollowUpMode(entry);
 		}
 		if (event.type === "compaction_start") entry.piCompactionInProgress = true;
@@ -1339,6 +1363,7 @@ async function prepareSessionEntry(
 				: baseEvent;
 		if (event.type === "agent_settled") {
 			entry.lastSettlement = terminal;
+			entry.activePromptModelSelection = undefined;
 			try {
 				recordSettlement(entry, terminal);
 			} catch (error) {
@@ -1372,12 +1397,28 @@ async function prepareSessionEntry(
 	const unsubscribeQueueSelection = session.agent.subscribe((event) => {
 		if (event.type === "message_start" && event.message.role === "user") {
 			const text = userContentText(event.message.content);
+			const steering = entry.dequeuedSteering.find((item) => item.text === text);
 			const consumed = entry.dequeuedFollowUps.find((item) => item.text === text);
-			entry.activePromptModelSelection = entry.nextPromptModelSelection ?? consumed?.modelSelection;
+			const pending = [...entry.pendingFollowUpAdmissions.values()].find(
+				(item) => entry.acceptedFollowUpAdmissions.has(item.id) && item.text === text,
+			);
+			if (entry.nextPromptModelSelection !== undefined)
+				entry.activePromptModelSelection = entry.nextPromptModelSelection;
+			else if (consumed !== undefined) entry.activePromptModelSelection = consumed.modelSelection;
+			else if (pending !== undefined) entry.activePromptModelSelection = pending.modelSelection;
+			else if (steering === undefined) entry.activePromptModelSelection = undefined;
 			entry.nextPromptModelSelection = undefined;
+			if (pending) {
+				entry.pendingFollowUpAdmissions.delete(pending.id);
+				entry.acceptedFollowUpAdmissions.delete(pending.id);
+			}
+			entry.dequeuedSteering = [];
 			entry.dequeuedFollowUps = [];
 		}
-		if (event.type === "agent_end") entry.dequeuedFollowUps = [];
+		if (event.type === "agent_end") {
+			entry.dequeuedSteering = [];
+			entry.dequeuedFollowUps = [];
+		}
 	});
 	const unsubscribeSession = entry.unsubscribe;
 	entry.unsubscribe = () => {
@@ -2355,25 +2396,34 @@ export async function respondToTool(
 
 function synchronizeQueuedLane(entry: Entry, kind: QueueLane, texts: readonly string[]): void {
 	const current = entry.queuedMessages[kind];
-	if (texts.length >= current.length) {
-		entry.queuedMessages[kind] = texts.map((text, index) => {
-			const tracked = current[index];
-			return tracked ? { ...tracked, text } : { id: entry.nextQueuedMessageId++, text };
-		});
-		return;
-	}
-
+	const pending =
+		kind === "followUp"
+			? [...entry.pendingFollowUpAdmissions.values()].filter((message) =>
+					entry.acceptedFollowUpAdmissions.has(message.id),
+				)
+			: [];
+	const candidates = [...current, ...pending];
 	const reconciled: TrackedQueuedMessage[] = [];
-	let currentIndex = current.length - 1;
+	let candidateIndex = candidates.length - 1;
 	for (let textIndex = texts.length - 1; textIndex >= 0; textIndex--) {
 		const text = texts[textIndex];
 		if (text === undefined) continue;
-		while (currentIndex >= 0 && current[currentIndex]?.text !== text) currentIndex--;
-		const tracked = currentIndex >= 0 ? current[currentIndex] : undefined;
-		reconciled.unshift(tracked ? { ...tracked, text } : { id: entry.nextQueuedMessageId++, text });
-		currentIndex--;
+		let searchIndex = candidateIndex;
+		while (searchIndex >= 0 && candidates[searchIndex]?.text !== text) searchIndex--;
+		const tracked = searchIndex >= 0 ? candidates[searchIndex] : undefined;
+		if (tracked) candidateIndex = searchIndex - 1;
+		reconciled.unshift(tracked ?? { id: entry.nextQueuedMessageId++, text });
 	}
 	entry.queuedMessages[kind] = reconciled;
+}
+
+function clearMirroredFollowUpAdmissions(entry: Entry): void {
+	const mirrored = new Set(entry.queuedMessages.followUp.map((message) => message.id));
+	for (const id of entry.acceptedFollowUpAdmissions)
+		if (mirrored.has(id)) {
+			entry.pendingFollowUpAdmissions.delete(id);
+			entry.acceptedFollowUpAdmissions.delete(id);
+		}
 }
 
 function synchronizeQueueFromSession(entry: Entry): void {
@@ -2384,7 +2434,8 @@ function synchronizeQueueFromSession(entry: Entry): void {
 function restorePriorFollowUpMode(entry: Entry): void {
 	if (
 		entry.priorFollowUpMode === undefined ||
-		entry.queuedMessages.followUp.some((message) => message.modelSelection)
+		entry.queuedMessages.followUp.some((message) => message.modelSelection) ||
+		[...entry.pendingFollowUpAdmissions.values()].some((message) => message.modelSelection)
 	)
 		return;
 	entry.session.agent.followUpMode = entry.priorFollowUpMode;
@@ -2395,6 +2446,15 @@ function laneMessages(entry: Entry, kind: QueueLane): readonly string[] {
 	return kind === "steering"
 		? entry.session.getSteeringMessages()
 		: entry.session.getFollowUpMessages();
+}
+
+function queueUpdateEventOf(entry: Entry): PiEvent {
+	return {
+		type: "queue_update",
+		steering: [...laneMessages(entry, "steering")],
+		followUp: [...laneMessages(entry, "followUp")],
+		...(hasQueuedImages(entry) ? { hasImages: true as const } : {}),
+	};
 }
 
 function hasQueuedImages(entry: Entry): boolean {
@@ -2467,6 +2527,85 @@ interface FollowUpHandoff {
 	wasStreaming: boolean;
 }
 
+interface ScheduledPromptPreflight {
+	current: () => boolean;
+	inputChecked: boolean;
+	skipInputHandlers?: boolean;
+	onTransform?: (result: Extract<InputEventResult, { action: "transform" }>) => void;
+}
+
+const scheduledPromptPreflight = new AsyncLocalStorage<ScheduledPromptPreflight>();
+
+function installScheduledPromptPreflight(entry: Entry): () => void {
+	const runner = entry.session.extensionRunner;
+	const originalHasHandlers = runner.hasHandlers;
+	const originalEmitInput = runner.emitInput;
+	const emitInput = originalEmitInput.bind(runner);
+	const guardedHasHandlers: typeof runner.hasHandlers = (eventType) => {
+		const guard = scheduledPromptPreflight.getStore();
+		return (
+			originalHasHandlers.call(runner, eventType) ||
+			(eventType === "input" && guard?.inputChecked === false)
+		);
+	};
+	const guardedEmitInput: typeof runner.emitInput = async (...args) => {
+		const guard = scheduledPromptPreflight.getStore();
+		if (guard?.skipInputHandlers && !guard.inputChecked && args[2] === "interactive") {
+			guard.inputChecked = true;
+			return {
+				action: "transform",
+				text: args[0],
+				...(args[1] ? { images: args[1] } : {}),
+			};
+		}
+		const scheduledInput = guard !== undefined && !guard.inputChecked && args[2] === "interactive";
+		if (scheduledInput) guard.inputChecked = true;
+		const result = await emitInput(...args);
+		if (guard && scheduledInput && result.action === "transform") guard.onTransform?.(result);
+		return guard && scheduledInput && !guard.current() ? { action: "handled" } : result;
+	};
+	const agent = entry.session.agent;
+	const originalAgentPrompt = agent.prompt;
+	const agentPrompt = originalAgentPrompt.bind(agent);
+	function guardedAgentPrompt(message: AgentMessage | AgentMessage[]): Promise<void>;
+	function guardedAgentPrompt(input: string, images?: PiImageContent[]): Promise<void>;
+	function guardedAgentPrompt(
+		input: string | AgentMessage | AgentMessage[],
+		images?: PiImageContent[],
+	): Promise<void> {
+		const guard = scheduledPromptPreflight.getStore();
+		if (guard && !guard.current()) return Promise.resolve();
+		return typeof input === "string" ? agentPrompt(input, images) : agentPrompt(input);
+	}
+	runner.hasHandlers = guardedHasHandlers;
+	runner.emitInput = guardedEmitInput;
+	agent.prompt = guardedAgentPrompt;
+	return () => {
+		if (runner.hasHandlers === guardedHasHandlers) runner.hasHandlers = originalHasHandlers;
+		if (runner.emitInput === guardedEmitInput) runner.emitInput = originalEmitInput;
+		if (agent.prompt === guardedAgentPrompt) agent.prompt = originalAgentPrompt;
+	};
+}
+
+function stagePromptModelSelection(
+	entry: Entry,
+	selection: PromptModelSelection | undefined,
+): () => void {
+	if (!selection) return () => {};
+	entry.nextPromptModelSelection = selection;
+	return () => {
+		if (entry.nextPromptModelSelection === selection) entry.nextPromptModelSelection = undefined;
+	};
+}
+
+function assertScheduledPromptCanDeliver(entry: Entry): void {
+	if (stateFromEntry(entry).needsInput)
+		throw new CodedError(
+			"SCHEDULED_PROMPT_BLOCKED_BY_NEEDS_INPUT",
+			"Cannot deliver a scheduled prompt while the session awaits a response.",
+		);
+}
+
 async function handOffFollowUp(
 	entry: Entry,
 	text: string,
@@ -2474,8 +2613,16 @@ async function handOffFollowUp(
 	answersDialogs: boolean,
 	modelSelection: PromptModelSelection | undefined,
 	rejectHandled = false,
+	isCurrent?: () => boolean,
+	skipInputHandlers = false,
 ): Promise<FollowUpHandoff> {
 	const release = admitPreflight(entry);
+	const captureInputTransform =
+		!skipInputHandlers && entry.session.extensionRunner.hasHandlers("input");
+	const restorePreflight =
+		rejectHandled || skipInputHandlers || captureInputTransform
+			? installScheduledPromptPreflight(entry)
+			: () => {};
 	const wasStreaming = entry.session.isStreaming;
 	const tracked: TrackedQueuedMessage = {
 		...(modelSelection ? { modelSelection } : {}),
@@ -2483,12 +2630,14 @@ async function handOffFollowUp(
 		text,
 		...(images && images.length > 0 ? { images: [...images] } : {}),
 	};
-	entry.queuedMessages.followUp.push(tracked);
+	entry.pendingFollowUpAdmissions.set(tracked.id, tracked);
 	if (modelSelection && wasStreaming && entry.priorFollowUpMode === undefined) {
 		entry.priorFollowUpMode = entry.session.agent.followUpMode;
 		entry.session.agent.followUpMode = "one-at-a-time";
 	}
 	const removeTracked = () => {
+		entry.pendingFollowUpAdmissions.delete(tracked.id);
+		entry.acceptedFollowUpAdmissions.delete(tracked.id);
 		entry.queuedMessages.followUp = entry.queuedMessages.followUp.filter(
 			(message) => message.id !== tracked.id,
 		);
@@ -2505,12 +2654,37 @@ async function handOffFollowUp(
 					removeTracked();
 					if (rejectHandled) {
 						settled = true;
-						reject(new Error("Scheduled prompt was handled without a session handoff."));
+						if (isCurrent && !isCurrent()) resolve({ disposition, run, wasStreaming });
+						else reject(new Error("Scheduled prompt was handled without a session handoff."));
 						return;
 					}
 				} else if (disposition === "started") {
+					if (rejectHandled && isCurrent && !isCurrent()) {
+						removeTracked();
+						settled = true;
+						resolve({ disposition, run, wasStreaming });
+						return;
+					}
 					removeTracked();
 					clearStagedSelection = stagePromptModelSelection(entry, modelSelection);
+				} else {
+					const hadQueuedImages = hasQueuedImages(entry);
+					const acceptedText = laneMessages(entry, "followUp").at(-1);
+					if (acceptedText !== undefined) tracked.text = acceptedText;
+					entry.acceptedFollowUpAdmissions.add(tracked.id);
+					synchronizeQueueFromSession(entry);
+					clearMirroredFollowUpAdmissions(entry);
+					if (
+						!hadQueuedImages &&
+						hasQueuedImages(entry) &&
+						sessions.get(entry.session.sessionId) === entry
+					) {
+						publish(
+							{ sessionId: entry.session.sessionId, event: queueUpdateEventOf(entry) },
+							entry.workspaceId,
+						);
+						publishEntryState(entry);
+					}
 				}
 				if (disposition !== "handled" && answersDialogs)
 					cancelExtUiForSession(entry.session.sessionId);
@@ -2518,11 +2692,31 @@ async function handOffFollowUp(
 				resolve({ disposition, run, wasStreaming });
 			};
 			try {
-				run = entry.session.prompt(text, {
+				const promptOptions: PromptOptions = {
 					...(images ? { images } : {}),
 					streamingBehavior: "followUp",
 					preflightResult,
-				});
+				};
+				run =
+					rejectHandled || skipInputHandlers || captureInputTransform
+						? scheduledPromptPreflight.run(
+								{
+									current: isCurrent ?? (() => true),
+									inputChecked: false,
+									...(skipInputHandlers ? { skipInputHandlers: true } : {}),
+									...(!skipInputHandlers
+										? {
+												onTransform: (result) => {
+													tracked.text = result.text;
+													if (result.images?.length) tracked.images = [...result.images];
+													else delete tracked.images;
+												},
+											}
+										: {}),
+								},
+								() => entry.session.prompt(text, promptOptions),
+							)
+						: entry.session.prompt(text, promptOptions);
 			} catch (error) {
 				removeTracked();
 				settled = true;
@@ -2548,14 +2742,15 @@ async function handOffFollowUp(
 			);
 		});
 	} finally {
+		restorePreflight();
 		release();
 	}
 }
 
-async function withFollowUpAdmission<T>(entry: Entry, operation: () => Promise<T>): Promise<T> {
-	const previous = entry.followUpAdmission;
+async function withPromptAdmission<T>(entry: Entry, operation: () => Promise<T>): Promise<T> {
+	const previous = entry.promptAdmission;
 	let release!: () => void;
-	entry.followUpAdmission = new Promise<void>((resolve) => (release = resolve));
+	entry.promptAdmission = new Promise<void>((resolve) => (release = resolve));
 	await previous;
 	try {
 		return await operation();
@@ -2586,37 +2781,75 @@ export async function promptSession(
 	const entry = mustGetEntry(sessionId);
 	const { modelSelection } = opts;
 	if (modelSelection) validatePromptModelSelection(sessionId, modelSelection);
-	if (entry.session.isStreaming && modelSelection) {
-		await followUpEntry(entry, text, images, true, modelSelection);
-		return;
-	}
-	admitRun(entry);
-	if (entry.session.isStreaming) {
-		await steerEntry(entry, text, images);
-		return;
-	}
-	const release = admitPreflight(entry);
-	const clearStagedSelection = stagePromptModelSelection(entry, modelSelection);
+	const admission = await withPromptAdmission(entry, async () => {
+		admitRun(entry);
+		if (entry.session.isStreaming) {
+			if (modelSelection) {
+				const handoff = await handOffFollowUp(entry, text, images, true, modelSelection);
+				return {
+					disposition: handoff.disposition,
+					...(handoff.disposition === "started" ? { run: handoff.run } : {}),
+				};
+			}
+			await steerEntry(entry, text, images);
+			return { disposition: "queued" as const };
+		}
+
+		const clearStagedSelection = stagePromptModelSelection(entry, modelSelection);
+		const releasePreflight = admitPreflight(entry);
+		let resolveAdmission!: (disposition: "handled" | "queued" | "started") => void;
+		let rejectAdmission!: (error: unknown) => void;
+		const accepted = new Promise<"handled" | "queued" | "started">((resolve, reject) => {
+			resolveAdmission = resolve;
+			rejectAdmission = reject;
+		});
+		let run: Promise<void>;
+		try {
+			run = entry.session.prompt(
+				text,
+				answeringDialogs(entry, images, (disposition) => {
+					opts.onPreflight?.();
+					resolveAdmission(disposition);
+				}),
+			);
+		} catch (error) {
+			clearStagedSelection();
+			releasePreflight();
+			throw error;
+		}
+		void run.then(
+			() => rejectAdmission(new Error("Prompt completed without an admission result.")),
+			rejectAdmission,
+		);
+		try {
+			const disposition = await accepted;
+			if (disposition !== "started") clearStagedSelection();
+			return { disposition, run, clearStagedSelection, releasePreflight };
+		} catch (error) {
+			clearStagedSelection();
+			releasePreflight();
+			throw error;
+		}
+	});
+
 	try {
-		await entry.session.prompt(text, answeringDialogs(entry, images, opts.onPreflight));
-	} catch (error) {
-		clearStagedSelection();
-		throw error;
+		if (admission.disposition === "started" && admission.run) await admission.run;
 	} finally {
-		release();
+		admission.clearStagedSelection?.();
+		admission.releasePreflight?.();
 	}
 }
 
 function answeringDialogs(
 	entry: Entry,
 	images: ImageContent[] | undefined,
-	onPreflight?: () => void,
+	onPreflight?: NonNullable<PromptOptions["preflightResult"]>,
 ): PromptOptions {
 	return {
 		...(images ? { images } : {}),
 		preflightResult: (disposition) => {
 			if (disposition !== "handled") cancelExtUiForSession(entry.session.sessionId);
-			onPreflight?.();
+			onPreflight?.(disposition);
 		},
 	};
 }
@@ -2651,25 +2884,6 @@ export function validatePromptModelSelection(
 		throw new Error("Unsupported reasoning level for scheduled model.");
 }
 
-function stagePromptModelSelection(
-	entry: Entry,
-	selection: PromptModelSelection | undefined,
-): () => void {
-	if (!selection) return () => {};
-	entry.nextPromptModelSelection = selection;
-	return () => {
-		if (entry.nextPromptModelSelection === selection) entry.nextPromptModelSelection = undefined;
-	};
-}
-
-function assertScheduledPromptCanDeliver(entry: Entry): void {
-	if (stateFromEntry(entry).needsInput)
-		throw new CodedError(
-			"SCHEDULED_PROMPT_BLOCKED_BY_NEEDS_INPUT",
-			"Cannot deliver scheduled prompt while the session awaits a response.",
-		);
-}
-
 export async function scheduleFollowUpSession(
 	sessionId: string,
 	text: string,
@@ -2689,11 +2903,21 @@ export async function acceptScheduledFollowUpSession(
 ): Promise<boolean> {
 	if (modelSelection) validatePromptModelSelection(sessionId, modelSelection);
 	const entry = mustGetEntry(sessionId);
-	return withFollowUpAdmission(entry, async () => {
+	return withPromptAdmission(entry, async () => {
 		if (!isCurrent()) return false;
 		assertScheduledPromptCanDeliver(entry);
-		await handOffFollowUp(entry, text, images, false, modelSelection, true);
-		return true;
+		const canDeliver = () =>
+			isCurrent() && sessions.get(sessionId) === entry && !stateFromEntry(entry).needsInput;
+		const handoff = await handOffFollowUp(
+			entry,
+			text,
+			images,
+			false,
+			modelSelection,
+			true,
+			canDeliver,
+		);
+		return handoff.disposition !== "handled" && canDeliver();
 	});
 }
 
@@ -2703,9 +2927,19 @@ async function followUpEntry(
 	images: ImageContent[] | undefined,
 	answersDialogs: boolean,
 	modelSelection?: PromptModelSelection,
+	alreadyAccepted = false,
 ): Promise<void> {
-	const handoff = await withFollowUpAdmission(entry, () =>
-		handOffFollowUp(entry, text, images, answersDialogs, modelSelection),
+	const handoff = await withPromptAdmission(entry, () =>
+		handOffFollowUp(
+			entry,
+			text,
+			images,
+			answersDialogs,
+			modelSelection,
+			false,
+			undefined,
+			alreadyAccepted,
+		),
 	);
 	if (!handoff.wasStreaming && handoff.disposition === "started") await handoff.run;
 }
@@ -2831,6 +3065,7 @@ function drainEntryQueue(entry: Entry, requireTextOnly: boolean): DrainedQueue {
 		entry.session.clearQueue();
 	} finally {
 		entry.clearingQueue = false;
+		entry.dequeuedSteering = [];
 		entry.dequeuedFollowUps = [];
 		entry.nextPromptModelSelection = undefined;
 	}
@@ -2893,6 +3128,7 @@ export async function removeQueuedSession(
 				item.message.images ? [...item.message.images] : undefined,
 				false,
 				item.message.modelSelection,
+				true,
 			);
 		}
 		if (!session.isStreaming && session.pendingMessageCount > 0) {
@@ -2904,6 +3140,7 @@ export async function removeQueuedSession(
 					message.images ? [...message.images] : undefined,
 					false,
 					message.modelSelection,
+					true,
 				);
 			}
 		}
@@ -3246,12 +3483,13 @@ export function liveParentContext(sessionId: string): ParentContext | undefined 
 	const entry = sessions.get(sessionId);
 	if (!entry || !canUseSessionResources(sessionId, entry.workspaceId)) return undefined;
 	const { session, workspaceId } = entry;
+	const selection = entry.activePromptModelSelection;
 	const isProjectTrusted = () =>
 		session.settingsManager.isProjectTrusted() && piResourceTrustFor(workspaceId);
 	return {
 		cwd: session.sessionManager.getCwd(),
-		model: session.model,
-		thinkingLevel: session.thinkingLevel,
+		model: selection ? resolveWireModel(entry.generation.runtime, selection.model) : session.model,
+		thinkingLevel: selection?.thinkingLevel ?? session.thinkingLevel,
 		modelRuntime: session.modelRuntime,
 		isProjectTrusted,
 		providerExtensionPaths: (provider) =>

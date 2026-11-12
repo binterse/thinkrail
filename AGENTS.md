@@ -51,8 +51,10 @@ Clear, fractal module boundaries are a top-priority requirement:
 - `pi` owns state. The host exposes what pi reports rather than recomputing cost, stats, or state.
 - Streaming semantics: `text_delta` / `thinking_delta` append;
   `tool_execution_update.partialResult` replaces.
-- `prompt()` throws while a session is streaming; use `steer()` / `followUp()`. Forward errors through
-  the event stream and thrown method result rather than treating them as a crash signal.
+- `prompt()` throws while a session is streaming unless given an explicit `streamingBehavior`; ordinary
+  callers use `steer()` / `followUp()`. Scheduled delivery uses `prompt(..., streamingBehavior: "followUp")`
+  to retain Pi's input pipeline and accepted-delivery signal. Forward errors through the event stream and
+  thrown method result rather than treating them as a crash signal.
 - Automatic work ends at `agent_settled`, never `agent_end`; retries, compaction, recovery, or queued
   continuations may follow an attempt-level `agent_end`.
 - UI panels are layout-agnostic; the shell arranges them.
@@ -111,14 +113,14 @@ commands live in `e2e/SPEC.md`; workflow harness details live in `e2e/workflows/
 
 ## PR destination and CI
 
-- Use `binterse/thinkrail` for review when `JetBrains/thinkrail` requires a maintainer to authorize
-  CI. Base its review PR on a branch synchronized with upstream, preserving fork-only commits, so
-  upstream drift does not appear as feature changes. Open an upstream PR only when its required
-  checks can run through the normal contribution path.
-- On the personal fork, run equivalent local checks first. If CI itself blocks review, comment out
-  only the blocking workflow in the feature branch and clearly report which check was skipped.
-  Restore it before proposing the branch to `JetBrains/thinkrail`; never change upstream workflows
-  to bypass approval.
+- Keep feature work and review on the personal `binterse/thinkrail` fork. Do not push to or merge into
+  `JetBrains/thinkrail`; leave any upstream PR open for maintainer review. Keep an eventual upstream
+  contribution easy to merge by syncing with current upstream and avoiding fork-specific workarounds
+  or changes that require maintainer intervention.
+- The personal fork does not have JetBrains' maintainer-approval restriction for CI. Run equivalent
+  local checks first; if CI blocks or disrupts review on the personal fork, comment out only the
+  affected workflow/check and report what was skipped. Never disable upstream CI, and restore any
+  fork-only CI workaround before proposing or updating an upstream PR.
 
 ## Handoff hygiene
 

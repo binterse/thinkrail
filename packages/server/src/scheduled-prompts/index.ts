@@ -195,9 +195,11 @@ async function deliverDue(now = Date.now()): Promise<void> {
 				records = records.filter((item) => item !== record);
 				notify(record.workspaceId);
 			} catch (error) {
-				record.status = "failed";
-				record.error = error instanceof Error ? error.message : "Prompt delivery failed.";
-				notify(record.workspaceId);
+				if (records.includes(record) && record.status === "delivering") {
+					record.status = "failed";
+					record.error = error instanceof Error ? error.message : "Prompt delivery failed.";
+					notify(record.workspaceId);
+				}
 			}
 		});
 		deliveries.set(record.sessionId, next);

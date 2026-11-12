@@ -27,6 +27,8 @@ the palette ranks with — kept here so host-side search can rank with the same 
   bootstrapping into a repository — an expected, transient refusal Error Tracking must not count as a bug),
   `PROJECT_CLONE_INVALID`, `PROJECT_CLONE_FAILED`, and `PROJECT_CLONE_CLEANUP_FAILED` (input
   correction, Git failure, and incomplete cleanup requiring filesystem intervention),
+  `SCHEDULED_PROMPT_BLOCKED_BY_NEEDS_INPUT` (a due prompt cannot be delivered while the session awaits
+  the user's response; the scheduled item remains visible for manual handling),
   `CHATS_CONTAINER` / `CHAT_WORKSPACE` / `NOT_A_CHAT` /
   `CHATS_STORE_UNAVAILABLE` (a repository door asked of the Chats container or a chat without a project,
   a chat method asked of something else, and the chats store unavailable — names the retry), and the three
