@@ -55,6 +55,20 @@ test("generated server runtime threads the opener and desktop proxies explicit r
 	expect(launcher).toContain("host.server.startAttributionClaim()");
 });
 
+test("local startup preserves the loopback port default and lets LAN config override it", () => {
+	const launcher = readFileSync(resolve(desktopDir, "../../scripts/local/Start.ps1"), "utf8");
+	expect(launcher).toMatch(
+		/if \(!\$TestProfile\)\s*\{\s*\$start\.Environment\['THINKRAIL_DESKTOP_PORT'\]\s*=\s*'60570'\s*\}/,
+	);
+	expect(launcher).toContain(
+		"$start.Environment['THINKRAIL_DESKTOP_HOST'] = [string]$network.host",
+	);
+	expect(launcher).toContain(
+		"$start.Environment['THINKRAIL_DESKTOP_PORT'] = [string]$network.port",
+	);
+	expect(launcher).toContain("if (!$TestProfile -and (Test-Path -LiteralPath $networkFile))");
+});
+
 test("uses the exact npm bootstrap pin while Bun owns the workspace dependency graph", () => {
 	expect(manifest.devDependencies.electrobun).toBe("2.0.6");
 	expect(manifest.dependencies).not.toHaveProperty("electrobun");

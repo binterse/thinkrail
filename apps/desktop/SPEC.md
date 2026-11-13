@@ -677,7 +677,8 @@ remains release-owned.
 
 ### Explicit local-network hosting
 
-The embedded desktop host defaults to loopback and an ephemeral port. Explicit launch-only
-THINKRAIL_DESKTOP_HOST / THINKRAIL_DESKTOP_PORT overrides allow a local build to bind a LAN
-interface with an exact port. The native webview still connects over loopback. The local
-launch script reads its optional .local/network.json; no installed profile is changed.
+The embedded desktop host runtime defaults to loopback and an ephemeral port. The local
+Windows launcher keeps its loopback port 60570 default unless its optional
+.local/network.json selects an exact host and port, such as a LAN interface. The native
+webview still connects over loopback; disposable test profiles remain loopback-only. No
+installed profile is changed.

@@ -54,6 +54,9 @@ $start.Environment['THINKRAIL_DESKTOP_READY_FILE'] = $ready
 $start.Environment['THINKRAIL_DESKTOP_CONTROL_FILE'] = $control
 $start.Environment['THINKRAIL_NO_ANALYTICS'] = '1'
 $start.Environment.Remove('ELECTROBUN_CONSOLE') | Out-Null
+if (!$TestProfile) {
+    $start.Environment['THINKRAIL_DESKTOP_PORT'] = '60570'
+}
 $networkFile = Join-Path $LocalRoot 'network.json'
 if (!$TestProfile -and (Test-Path -LiteralPath $networkFile)) {
     $network = Get-Content -LiteralPath $networkFile -Raw | ConvertFrom-Json

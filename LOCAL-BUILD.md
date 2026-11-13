@@ -89,9 +89,10 @@ Do not create a daily-use shortcut for them. Real provider turns still cost toke
 ## Optional private LAN access
 
 An ignored `.local/network.json` can select `{"host":"0.0.0.0","port":24242}`.
-Normal startup uses loopback and an ephemeral port without this file; disposable
-`-TestProfile` startup always stays on loopback. The desktop window still uses loopback;
-other devices use `http://<host-LAN-IP>:24242/` on the same private network.
+Without this file, normal startup keeps the existing loopback port 60570 default;
+disposable `-TestProfile` startup stays on loopback with an ephemeral port. The desktop
+window still uses loopback; other devices use `http://<host-LAN-IP>:24242/` on the same
+private network when LAN config is enabled.
 
 `EnableLanFirewall.ps1` requires Windows administrator approval. It creates or verifies the named
 `ThinkRail-Local-LAN-24242` inbound TCP rule for this dev bundle only, scoped to Private
