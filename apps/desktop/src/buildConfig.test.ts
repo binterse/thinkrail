@@ -47,11 +47,26 @@ test("selects real Bun and preserves the physical runtime resources without reti
 test("generated server runtime threads the opener and desktop proxies explicit readiness", () => {
 	const source = readFileSync(resolve(desktopDir, "preBuild.ts"), "utf8");
 	expect(source).toContain("options.openExternal ? { openExternal: options.openExternal } : {}");
+	expect(source).toContain('host: process.env.THINKRAIL_DESKTOP_HOST ?? "127.0.0.1"');
 	const runtimeContract = readFileSync(resolve(desktopDir, "src/serverRuntime.ts"), "utf8");
 	expect(runtimeContract).toContain("startAttributionClaim(): void");
 	const launcher = readFileSync(resolve(desktopDir, "src/index.ts"), "utf8");
 	expect(launcher).toContain('mainWindow.webview.on("dom-ready"');
 	expect(launcher).toContain("host.server.startAttributionClaim()");
+});
+
+test("local startup preserves the loopback port default and lets LAN config override it", () => {
+	const launcher = readFileSync(resolve(desktopDir, "../../scripts/local/Start.ps1"), "utf8");
+	expect(launcher).toMatch(
+		/if \(!\$TestProfile\)\s*\{\s*\$start\.Environment\['THINKRAIL_DESKTOP_PORT'\]\s*=\s*'60570'\s*\}/,
+	);
+	expect(launcher).toContain(
+		"$start.Environment['THINKRAIL_DESKTOP_HOST'] = [string]$network.host",
+	);
+	expect(launcher).toContain(
+		"$start.Environment['THINKRAIL_DESKTOP_PORT'] = [string]$network.port",
+	);
+	expect(launcher).toContain("if (!$TestProfile -and (Test-Path -LiteralPath $networkFile))");
 });
 
 test("uses the exact npm bootstrap pin while Bun owns the workspace dependency graph", () => {

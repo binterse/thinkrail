@@ -57,6 +57,15 @@ $start.Environment.Remove('ELECTROBUN_CONSOLE') | Out-Null
 if (!$TestProfile) {
     $start.Environment['THINKRAIL_DESKTOP_PORT'] = '60570'
 }
+$networkFile = Join-Path $LocalRoot 'network.json'
+if (!$TestProfile -and (Test-Path -LiteralPath $networkFile)) {
+    $network = Get-Content -LiteralPath $networkFile -Raw | ConvertFrom-Json
+    if ($network.host -notin @('127.0.0.1', '0.0.0.0')) { throw 'Unsupported local-build listen address.' }
+    if ($network.port -isnot [long] -and $network.port -isnot [int]) { throw 'Local-build port must be an integer.' }
+    if ($network.port -lt 1 -or $network.port -gt 65535) { throw 'Local-build port must be 1-65535.' }
+    $start.Environment['THINKRAIL_DESKTOP_HOST'] = [string]$network.host
+    $start.Environment['THINKRAIL_DESKTOP_PORT'] = [string]$network.port
+}
 if ($TestProfile) {
     $start.Environment['HOME'] = Join-Path $profile 'home'
     $start.Environment['USERPROFILE'] = Join-Path $profile 'home'

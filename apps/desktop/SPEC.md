@@ -675,8 +675,10 @@ Shared/remote backend profiles, profile selection, multi-window/deep-link routin
 Electrobun workarounds follows [[electrobun-compatibility]]. The update feed publication described above
 remains release-owned.
 
-### Local development port
+### Explicit local-network hosting
 
-The embedded desktop host binds to loopback. THINKRAIL_DESKTOP_PORT optionally selects
-an exact local port; without it, the desktop uses an ephemeral port. The daily-use local
-launcher selects port 60570. This build does not expose a LAN hosting override.
+The embedded desktop host runtime defaults to loopback and an ephemeral port. The local
+Windows launcher keeps its loopback port 60570 default unless its optional
+.local/network.json selects an exact host and port, such as a LAN interface. The native
+webview still connects over loopback; disposable test profiles remain loopback-only. No
+installed profile is changed.

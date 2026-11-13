@@ -150,7 +150,7 @@ export async function startDesktopHost(options) {
   });
   const host = await bootHost({
     port: Number(process.env.THINKRAIL_DESKTOP_PORT ?? 0),
-    host: "127.0.0.1",
+    host: process.env.THINKRAIL_DESKTOP_HOST ?? "127.0.0.1",
     portMode: "exact",
     resolveShellEnv: true,
     staticDir: options.staticDir,

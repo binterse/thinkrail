@@ -80,7 +80,7 @@ For latest version, see the [Releases page](https://github.com/JetBrains/thinkra
 
 - **Desktop app or browser.** A native desktop app, or the `thinkrail` CLI that opens the same app in your browser. Both embed the same engine host. App state lives under `~/.thinkrail`.
 
-For this checkout's Windows build, canonical profile and backups, see [LOCAL-BUILD.md](LOCAL-BUILD.md).
+For this checkout's Windows build, canonical profile, backups and optional LAN access, see [LOCAL-BUILD.md](LOCAL-BUILD.md).
 
 - **Your language.** ThinkRail uses your system language or a language you pick in Settings → Language: English, Japanese, Russian, Simplified Chinese, Spanish, or Traditional Chinese (Taiwan). You can add a language ThinkRail doesn't ship yet by putting a translated locale file, for example `de.json`, in `~/.thinkrail/locales`. (Tell your AI agent to do it for you!)
 
