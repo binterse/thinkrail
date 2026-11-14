@@ -1,6 +1,8 @@
 # Local Windows build
 
-This checkout starts at upstream `v0.3.0` and adds scheduled prompts. It builds a
+This unofficial personal fork builds on ThinkRail and adds Windows file context actions,
+scheduled prompts, and optional private LAN access. These instructions describe the local
+Windows setup, not an official JetBrains distribution or support service. It builds a
 dev-channel desktop app; native production updates are disabled. Bun 1.4.4 is pinned
 under `.local/toolchain`, without changing the system PATH. No installer is run.
 

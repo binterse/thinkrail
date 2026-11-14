@@ -1,7 +1,8 @@
-# Contributing to ThinkRail
+# Contributing to binterse’s ThinkRail fork
 
-Thanks for your interest in ThinkRail! Contributions of all kinds are welcome — bug
-reports, fixes, features, docs, and feedback.
+This is an unofficial personal fork of [JetBrains/thinkrail](https://github.com/JetBrains/thinkrail).
+Fixes, features, docs, and feedback for this fork are welcome. The official project has its own
+[contribution guide](https://github.com/JetBrains/thinkrail/blob/main/CONTRIBUTING.md).
 
 By contributing, you agree that your contributions will be licensed under the
 [Apache License 2.0](LICENSE), and you agree to abide by our
@@ -9,12 +10,19 @@ By contributing, you agree that your contributions will be licensed under the
 
 ## Reporting bugs and requesting features
 
-Open a GitHub issue. Before filing, search existing issues to avoid duplicates. For
-bug reports, include:
+The fork’s GitHub Issues tracker is currently disabled. Start with the maintainer’s
+[GitHub profile](https://github.com/binterse) or [LinkedIn](https://www.linkedin.com/in/wallback/).
+GitHub profiles do not offer private messaging; use LinkedIn messaging where available for direct
+contact. Do not post secrets or sensitive reports publicly. For bug reports, include:
 
 - What you did, what you expected, and what actually happened
 - Your OS, Bun, and Node versions
 - Relevant logs or a minimal reproduction
+- The fork version or commit
+
+If the problem also occurs on an official ThinkRail build, use the
+[upstream issue tracker](https://github.com/JetBrains/thinkrail/issues) and follow its reporting
+guidelines. State which official build reproduced it; do not assume a fork-only problem affects upstream.
 
 ## Development setup
 
@@ -23,7 +31,7 @@ Node.js ≥ 22.23.4 (the in-process `pi` engine needs ≥ 22.19; the website bui
 ≥ 22.23.4 for Astro 7.4), and an authenticated `pi` provider for agent work.
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/binterse/thinkrail.git
 cd thinkrail
 bun install
 bun run dev
@@ -140,19 +148,23 @@ ThinkRail's interface strings live in one file,
 To ship a translation built-in for everyone, open a pull request that adds it as
 `packages/locales/<code>.json`, adds a `TRANSLATIONS` entry
 `"<code>": new URL("../<code>.json", import.meta.url)` in `packages/locales/src/index.ts`, and adds the
-language to the built-in list in `README.md` — nothing else needs to change. It may be partial;
+language to the built-in list in the upstream `README.md` when contributing upstream. It may be partial;
 `bun run test` checks it against `en.json` (keys, placeholders, markup, plural forms). Agent replies,
 tool output, skills, and prompts are not part of the interface and are not translated.
 
 ## Submitting changes
 
-1. [Fork the repository](https://docs.github.com/articles/fork-a-repo) and create a
-   branch off `main`.
+1. Create a branch off this fork’s `main`, using your own fork if you need push access.
 2. Make your change, keeping it focused. Match the surrounding code style and the
    conventions in `AGENTS.md`.
 3. Add or update tests and specs, and run the checks above.
-4. Open a [pull request](https://docs.github.com/articles/creating-a-pull-request)
-   against `main` with a clear description of *what* changed and *why*.
+4. Open a [pull request](https://github.com/binterse/thinkrail/compare) against
+   `binterse/thinkrail:main` with a clear description of *what* changed and *why*.
+
+Keep personal-fork documentation and configuration in separate commits from functional fixes.
+For an upstream contribution, start a branch from current `JetBrains/thinkrail:main` and cherry-pick
+only the relevant functional commits. Follow upstream’s contribution guide and target
+`JetBrains/thinkrail:main`; exclude this fork’s identity, contacts, ownership, and configuration changes.
 
 Write commit messages and PR descriptions that explain the reasoning behind the
 change, not just the mechanics. A maintainer will review your PR and may suggest
