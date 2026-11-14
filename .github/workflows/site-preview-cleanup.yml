@@ -16,7 +16,7 @@ concurrency:
 jobs:
   cleanup:
     name: Retire PR preview
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    if: github.repository == 'JetBrains/thinkrail' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     env:
       BRANCH: pr-${{ github.event.pull_request.number }}

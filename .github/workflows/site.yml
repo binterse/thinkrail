@@ -21,6 +21,7 @@ concurrency:
 jobs:
   deploy:
     name: Build and deploy
+    if: github.repository == 'JetBrains/thinkrail'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:

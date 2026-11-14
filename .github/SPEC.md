@@ -26,6 +26,10 @@ pipeline.
   publication before required signing and verification; checksums over pre-signing bytes; or a
   release-only application build path that bypasses normal package commands.
 
+Website deployment, PR preview and cleanup, and npm publication jobs run only in
+`JetBrains/thinkrail`. Preview jobs retain their same-repository PR condition; ordinary CI remains
+available in forks.
+
 ## CI
 
 Workflow Bun setup reads the root `package.json` `packageManager` pin through `bun-version-file`.

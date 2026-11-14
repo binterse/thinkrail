@@ -26,6 +26,7 @@ permissions:
 jobs:
   publish:
     name: Publish to npm
+    if: github.repository == 'JetBrains/thinkrail'
     runs-on: ubuntu-latest
     environment: npm-release
     permissions:
