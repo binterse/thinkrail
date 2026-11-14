@@ -82,6 +82,7 @@ function ChatTurnViewImpl({
 	/** Live-resource deep link for this chat's latest turn divider only. */
 	stillRunning?: StillRunning | undefined;
 }) {
+	const t = useT();
 	switch (row.kind) {
 		case "user":
 			return (
@@ -131,6 +132,13 @@ function ChatTurnViewImpl({
 					copyable={isFinalAnswer}
 					getText={() => row.text}
 				>
+					{row.model ? (
+						<p className="mb-4 text-text-subtle tr-text-metadata">
+							{t("chat.modelFallback.respondedWith", {
+								model: `${row.model.provider}/${row.model.id}`,
+							})}
+						</p>
+					) : null}
 					<div
 						className={cn(
 							"tr-text-reading text-text-default",

@@ -19,6 +19,11 @@ host-runs-pi / typed-WS / React+shadcn model). Built so others can reuse/contrib
 a future `packages/chat-ui`). Built-in tool renderers live in the child
 [tools/SPEC.md](tools/SPEC.md); extracted extension renderers live in [[module-thinkrail-extensions]].
 
+When host protocol v116 is available, the composer offers the server-owned ordered fallback settings in
+both browser and desktop clients. The dialog edits global settings and a project override (inherit, disabled,
+or custom); broadcasts make multiple clients converge. Assistant text rows render the model identity carried
+by pi's response separately from the selected model, so a fallback answer remains attributable in history.
+
 ## Rendering model — rows and progressive disclosure
 
 The transcript is pi-canonical turns (`ChatTurn` in `types.ts`: user/assistant are pi messages; `system`,

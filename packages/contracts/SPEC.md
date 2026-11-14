@@ -149,6 +149,11 @@ the palette ranks with — kept here so host-side search can rank with the same 
   would silently shift every later jump anchor); `export *` (value) of `wsProtocol`
   (`WS_METHODS`, `WS_CHANNELS`, the typed maps, `PROTOCOL_VERSION`, `WS_MAX_FRAME_BYTES`, and
   feature-introduction versions).
+- **Model fallback** (`MODEL_FALLBACK_PROTOCOL_VERSION`, v116) adds `modelFallback.get` /
+  `modelFallback.update` and the `modelFallback.changed` broadcast. Settings carry only versioned
+  `{provider,id}` references with global and project policy (each ordered list is limited to
+  `MODEL_FALLBACK_MODELS_LIMIT` = 20); credentials and raw pi models never cross the wire. The web control
+  is hidden from older hosts.
 - **Allowed deps:** none at runtime. **Type-only** devDeps on `@earendil-works/pi-ai` +
   `@earendil-works/pi-agent-core`, imported **from their package roots** (type-only → erased at build).
 - **Deployment obligation:** wire contracts describe host behavior and compatibility, never the launcher

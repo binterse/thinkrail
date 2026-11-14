@@ -1,0 +1,255 @@
+diff --git a/dist/core/extensions/types.d.ts b/dist/core/extensions/types.d.ts
+index f527dee4..ecd39331 100644
+--- a/dist/core/extensions/types.d.ts
++++ b/dist/core/extensions/types.d.ts
+@@ -8,7 +8,7 @@
+  * - Interact with the user via UI primitives
+  */
+ import type { AgentMessage, AgentTool, AgentToolCallOutcome, AgentToolResult, AgentToolUpdateCallback, ThinkingLevel, ToolExecutionMode } from "@earendil-works/pi-agent-core";
+-import type { AnyModel, Api, AssistantMessageEvent, AssistantMessageEventStream, ClassifierApi, ConstrainedSamplingConfig, ImageApi, ImageContent, JsonValue, Message, Model, OAuthCredentials, OAuthLoginCallbacks, Provider, ProviderClassifier, ProviderHeaders, ProviderId, ProviderImages, RefreshModelsContext, SimpleStreamOptions, TextContent, ToolResultMessage, TranscriptContext, Usage } from "@earendil-works/pi-ai";
++import type { AnyModel, Api, AssistantMessage, AssistantMessageEvent, AssistantMessageEventStream, ClassifierApi, ConstrainedSamplingConfig, ImageApi, ImageContent, JsonValue, Message, Model, ModelThinkingLevel, OAuthCredentials, OAuthLoginCallbacks, Provider, ProviderClassifier, ProviderHeaders, ProviderId, ProviderImages, RefreshModelsContext, SimpleStreamOptions, TextContent, ToolResultMessage, TranscriptContext, Usage } from "@earendil-works/pi-ai";
+ import type { AutocompleteItem, AutocompleteProvider, Component, EditorComponent, EditorTheme, Keybinding, KeyId, OverlayHandle, OverlayOptions, ProgramStatus, TUI } from "@earendil-works/pi-tui";
+ import type { Static, TSchema } from "typebox";
+ import type { Theme } from "../../modes/interactive/theme/theme.ts";
+@@ -1098,7 +1098,23 @@ export declare function isToolCallEventType<TName extends string, TInput extends
+     input: TInput;
+ };
+ /** Union of all event types */
+-export type ExtensionEvent = ProjectTrustEvent | ResourcesDiscoverEvent | McpServersChangeEvent | SessionEvent | ContextEvent | ContextWithSystemEvent | CacheWarmingDecisionEvent | BeforeProviderRequestEvent | BeforeProviderHeadersEvent | AfterProviderResponseEvent | ProviderStreamEvent | BeforeAgentStartEvent | AgentStartEvent | AgentEndEvent | AgentBeforeSettleEvent | AgentSettledEvent | UIPromptStartEvent | UIPromptEndEvent | TurnStartEvent | TurnEndEvent | MessageStartEvent | MessageUpdateEvent | MessageEndEvent | ToolExecutionStartEvent | ToolExecutionUpdateEvent | ToolExecutionEndEvent | ModelSelectEvent | ThinkingLevelSelectEvent | UserBashEvent | InputEvent | ToolCallEvent | ToolResultEvent;
++export interface ModelFallbackEvent {
++    type: "model_fallback";
++    selectedModel: Model<Api>;
++    failedModel: Model<Api>;
++    failedMessage: AssistantMessage;
++    triedModels: readonly Model<Api>[];
++    retryAttempt: number;
++    maxRetries: number;
++    retryEnabled: boolean;
++    signal?: AbortSignal;
++}
++export interface ModelFallbackEventResult {
++    model?: Model<Api>;
++    thinkingLevel?: ModelThinkingLevel;
++    skipRetries?: boolean;
++}
++export type ExtensionEvent = ProjectTrustEvent | ResourcesDiscoverEvent | McpServersChangeEvent | SessionEvent | ContextEvent | ContextWithSystemEvent | CacheWarmingDecisionEvent | ModelFallbackEvent | BeforeProviderRequestEvent | BeforeProviderHeadersEvent | AfterProviderResponseEvent | ProviderStreamEvent | BeforeAgentStartEvent | AgentStartEvent | AgentEndEvent | AgentBeforeSettleEvent | AgentSettledEvent | UIPromptStartEvent | UIPromptEndEvent | TurnStartEvent | TurnEndEvent | MessageStartEvent | MessageUpdateEvent | MessageEndEvent | ToolExecutionStartEvent | ToolExecutionUpdateEvent | ToolExecutionEndEvent | ModelSelectEvent | ThinkingLevelSelectEvent | UserBashEvent | InputEvent | ToolCallEvent | ToolResultEvent;
+ export interface ContextEventResult {
+     messages?: AgentMessage[];
+ }
+@@ -1242,6 +1258,7 @@ export interface ExtensionAPI {
+     on(event: "context", handler: ExtensionHandler<ContextEvent, ContextEventResult>): () => void;
+     on(event: "context_with_system", handler: ExtensionHandler<ContextWithSystemEvent, ContextEventResult>): () => void;
+     on(event: "cache_warming_decision", handler: ExtensionHandler<CacheWarmingDecisionEvent, CacheWarmingDecisionEventResult>): () => void;
++    on(event: "model_fallback", handler: ExtensionHandler<ModelFallbackEvent, ModelFallbackEventResult>): () => void;
+     on(event: "before_provider_request", handler: ExtensionHandler<BeforeProviderRequestEvent, BeforeProviderRequestEventResult>): () => void;
+     on(event: "before_provider_headers", handler: ExtensionHandler<BeforeProviderHeadersEvent>): () => void;
+     on(event: "after_provider_response", handler: ExtensionHandler<AfterProviderResponseEvent>): () => void;
+@@ -1799,4 +1816,4 @@ export interface ExtensionError {
+     error: string;
+     stack?: string;
+ }
+-//# sourceMappingURL=types.d.ts.map
+\ No newline at end of file
++//# sourceMappingURL=types.d.ts.map
+diff --git a/dist/core/extensions/runner.js b/dist/core/extensions/runner.js
+index 79d0da04..c159a275 100644
+--- a/dist/core/extensions/runner.js
++++ b/dist/core/extensions/runner.js
+@@ -869,6 +869,28 @@ export class ExtensionRunner {
+         }
+         return action;
+     }
++    async emitModelFallback(event) {
++        const ctx = this.createContext();
++        let result;
++        for (const { ext, handlers } of snapshotEventHandlers(this.extensions, event.type)) {
++            for (const handler of handlers) {
++                try {
++                    const candidate = await handler(event, ctx);
++                    if (candidate?.model || candidate?.skipRetries)
++                        result = candidate;
++                }
++                catch (err) {
++                    this.emitError({
++                        extensionPath: ext.path,
++                        event: event.type,
++                        error: err instanceof Error ? err.message : String(err),
++                        stack: err instanceof Error ? err.stack : undefined,
++                    });
++                }
++            }
++        }
++        return result;
++    }
+     async emitMessageEnd(event) {
+         const ctx = this.createContext();
+         let currentMessage = event.message;
+@@ -1243,4 +1265,4 @@ export class ExtensionRunner {
+             : { action: "continue" };
+     }
+ }
+-//# sourceMappingURL=runner.js.map
+\ No newline at end of file
++//# sourceMappingURL=runner.js.map
+diff --git a/dist/core/agent-session.js b/dist/core/agent-session.js
+index d67feeb7..6a22607a 100644
+--- a/dist/core/agent-session.js
++++ b/dist/core/agent-session.js
+@@ -140,6 +140,8 @@ export class AgentSession {
+      * retry is routed with it as `failed`, since the context no longer contains it.
+      */
+     _failedResponse;
++    _fallbackModelSelection;
++    _fallbackModelsTried = [];
+     // Bash execution state
+     _bashAbortControllers = new Set();
+     _pendingBashMessages = [];
+@@ -311,6 +313,9 @@ export class AgentSession {
+      * model. Under a virtual selection, that is the physical model that produced it.
+      */
+     _modelForMessage(message) {
++        const fallback = this._fallbackModelSelection?.model;
++        if (fallback?.provider === message.provider && fallback.id === message.model)
++            return fallback;
+         const model = this.model;
+         if (model && isVirtualModel(model))
+             return this._modelRuntime.getPhysicalModel(message.provider, message.model);
+@@ -363,7 +368,7 @@ export class AgentSession {
+     }
+     /** The model whose limits apply to the conversation. */
+     _limitsModel() {
+-        return this.routedModel?.model ?? this.model;
++        return this._fallbackModelSelection?.model ?? this.routedModel?.model ?? this.model;
+     }
+     /**
+      * Install tool hooks once on the Agent instance.
+@@ -509,6 +514,18 @@ export class AgentSession {
+             let { previous, context, projection } = await prepare();
+             const model = previous?.model ?? this.agent.state.model;
+             const thinkingLevel = previous?.thinkingLevel ?? this.agent.state.thinkingLevel;
++            if (this._fallbackModelSelection) {
++                if (this._exceedsCompactionThreshold(this._fallbackModelSelection.model, projection)) {
++                    await this._runAutoCompaction("threshold", false);
++                    ({ previous, context, projection } = await prepare());
++                }
++                return {
++                    ...previous,
++                    context,
++                    model: this._fallbackModelSelection.model,
++                    thinkingLevel: this._fallbackModelSelection.thinkingLevel ?? thinkingLevel,
++                };
++            }
+             if (!isVirtualModel(model))
+                 return { ...previous, context, model, thinkingLevel };
+             // The selection stays in agent state; only this request uses the routed model. A routing
+@@ -762,6 +779,10 @@ export class AgentSession {
+     }
+     /** Internal handler for agent events - shared by subscribe and reconnect */
+     _handleAgentEvent = async (event) => {
++        if (event.type === "message_start" && event.message.role === "user") {
++            this._fallbackModelSelection = undefined;
++            this._fallbackModelsTried = [];
++        }
+         // An abort requested while the run was starting, e.g. during before_agent_start, stops it
+         // here. agent_start is awaited before the first request.
+         if (event.type === "agent_start" && this._agentRunAbortRequested)
+@@ -1601,7 +1622,57 @@ export class AgentSession {
+         }
+         if (!message)
+             return this.agent.hasQueuedMessages();
+-        if (this._isRetryableError(message) && (await this._prepareRetry(message))) {
++        let skipRetry = false;
++        if (message.stopReason === "error" && !this._agentRunAbortRequested && this._extensionRunner.hasHandlers("model_fallback")) {
++            const selectedModel = this.model;
++            const failedModel = this._modelRuntime.getPhysicalModel(message.provider, message.model);
++            if (selectedModel && failedModel) {
++                const retrySettings = this.settingsManager.getRetrySettings();
++                const fallback = await this._extensionRunner.emitModelFallback({
++                    type: "model_fallback",
++                    selectedModel,
++                    failedModel,
++                    failedMessage: message,
++                    triedModels: this._fallbackModelsTried,
++                    retryAttempt: this._retryAttempt,
++                    maxRetries: retrySettings.maxRetries,
++                    retryEnabled: retrySettings.enabled,
++                    signal: this.agent.signal,
++                });
++                if (fallback?.model && !isVirtualModel(fallback.model) && !this._agentRunAbortRequested) {
++                    const available = this._modelRuntime.getAvailableSnapshot();
++                    if (available.some((model) => modelsAreEqual(model, fallback.model))) {
++                        if (this._retryAttempt > 0) {
++                            this._emit({
++                                type: "auto_retry_end",
++                                success: false,
++                                attempt: this._retryAttempt,
++                                finalError: message.errorMessage,
++                            });
++                            this._retryAttempt = 0;
++                        }
++                        this._omitRecoveryAttempt(message);
++                        this._fallbackModelSelection = fallback;
++                        this._fallbackModelsTried.push(fallback.model);
++                        this._failedResponse = message;
++                        return true;
++                    }
++                }
++                if (fallback?.skipRetries && !this._agentRunAbortRequested) {
++                    skipRetry = true;
++                    if (this._retryAttempt > 0) {
++                        this._emit({
++                            type: "auto_retry_end",
++                            success: false,
++                            attempt: this._retryAttempt,
++                            finalError: message.errorMessage,
++                        });
++                        this._retryAttempt = 0;
++                    }
++                }
++            }
++        }
++        if (!skipRetry && this._isRetryableError(message) && (await this._prepareRetry(message))) {
+             if (this._agentRunAbortRequested)
+                 this._finishCancelledRetry();
+             this._failedResponse = message;
+@@ -3740,4 +3811,4 @@ export class AgentSession {
+         return this._extensionRunner;
+     }
+ }
+-//# sourceMappingURL=agent-session.js.map
+\ No newline at end of file
++//# sourceMappingURL=agent-session.js.map
+diff --git a/dist/core/extensions/index.d.ts b/dist/core/extensions/index.d.ts
+index 10d4360d..1ff23489 100644
+--- a/dist/core/extensions/index.d.ts
++++ b/dist/core/extensions/index.d.ts
+@@ -6,7 +6,8 @@ export type { SourceInfo } from "../source-info.ts";
+ export { createExtensionRuntime, discoverAndLoadExtensions, loadExtensionFromFactory, loadExtensions, } from "./loader.ts";
+ export type { ExtensionErrorListener, ForkHandler, NavigateTreeHandler, NewSessionHandler, ShutdownHandler, SwitchSessionHandler, } from "./runner.ts";
+ export { ExtensionRunner } from "./runner.ts";
++export type { ModelFallbackEvent, ModelFallbackEventResult } from "./types.ts";
+ export type { AfterProviderResponseEvent, AgentActivityOutcome, AgentBeforeSettleEvent, AgentBeforeSettleEventResult, AgentEndEvent, AgentSettledEvent, AgentStartEvent, AgentToolResult, AgentToolUpdateCallback, AppendEntryHandler, AppKeybinding, AutocompleteProviderFactory, BashToolCallEvent, BashToolResultEvent, BeforeAgentStartCustomEvent, BeforeAgentStartEvent, BeforeAgentStartEventResult, BeforeAgentStartUserEvent, BeforeProviderHeadersEvent, BeforeProviderRequestEvent, BeforeProviderRequestEventResult, BoundaryContextPreview, BoundaryResult, BoundaryState, BuildSystemPromptOptions, CacheWarmingDecisionEvent, CacheWarmingDecisionEventResult, CompactionEntryDraft, CompactOptions, ContextEditEntryDraft, ContextEvent, ContextEventResult, ContextUsage, ContextWithSystemEvent, CustomEntryDraft, CustomMessageEntryDraft, CustomToolCallEvent, CustomToolResultEvent, EditorFactory, EditToolCallEvent, EditToolResultEvent, EntryRenderer, EntryRenderOptions, ExecOptions, ExecResult, ExecuteToolOptions, Extension, ExtensionActions, ExtensionAPI, ExtensionCommandContext, ExtensionCommandContextActions, ExtensionContext, ExtensionContextActions, ExtensionError, ExtensionEvent, ExtensionFactory, ExtensionFlag, ExtensionHandler, ExtensionMode, ExtensionRuntime, ExtensionShortcut, ExtensionToolContext, ExtensionUIContext, ExtensionUIDialogOptions, ExtensionVirtualModel, ExtensionWidgetOptions, FindToolCallEvent, FindToolResultEvent, GetActiveToolsHandler, GetAllToolsHandler, GetCommandsHandler, GetThinkingLevelHandler, GrepToolCallEvent, GrepToolResultEvent, InlineExtension, InputEvent, InputEventResult, InputSource, KeybindingHints, KeybindingsManager, LoadExtensionsResult, LsToolCallEvent, LsToolResultEvent, MarkdownMessageType, MarkdownTransformContext, MarkdownTransformer, MarkdownTransformerOptions, MarkdownTransformerRegistration, McpServersChangeEvent, MessageEndEvent, MessageEndEventResult, MessageRenderer, MessageRenderOptions, MessageStartEvent, MessageUpdateEvent, ModelSelectEvent, ModelSelectSource, NormalizedBuildSystemPromptOptions, PowerShellToolCallEvent, PowerShellToolResultEvent, ProjectTrustContext, ProjectTrustEvent, ProjectTrustEventDecision, ProjectTrustEventResult, ProjectTrustHandler, ProviderConfig, ProviderModelConfig, ProviderStreamEvent, ReadToolCallEvent, ReadToolResultEvent, RegisteredCommand, RegisteredTool, ReplacedSessionContext, ResolvedCommand, ResourcesDiscoverEvent, ResourcesDiscoverResult, SendMessageHandler, SendUserMessageHandler, SessionBeforeCompactEvent, SessionBeforeCompactResult, SessionBeforeForkEvent, SessionBeforeForkResult, SessionBeforeSwitchEvent, SessionBeforeSwitchResult, SessionBeforeTreeEvent, SessionBeforeTreeResult, SessionBoundaryDraft, SessionCompactEvent, SessionCompactFailedEvent, SessionEvent, SessionInfoChangedEvent, SessionShutdownEvent, SessionStartEvent, SessionTreeEvent, SetActiveToolsHandler, SetLabelHandler, SetModelHandler, SetThinkingLevelHandler, TerminalInputHandler, ThinkingLevelSelectEvent, ToolAnnotations, ToolCallEvent, ToolCallEventResult, ToolDefinition, ToolExecutionEndEvent, ToolExecutionMode, ToolExecutionStartEvent, ToolExecutionUpdateEvent, ToolExposure, ToolInfo, ToolLoadout, ToolLoadoutChanges, ToolNamespace, ToolRendererResolver, ToolRenderers, ToolRenderResultOptions, ToolResultEvent, ToolResultEventResult, TreePreparation, TurnEndEvent, TurnEndEventResult, TurnStartEvent, UIPromptEndEvent, UIPromptKind, UIPromptStartEvent, UserBashEvent, UserBashEventResult, WidgetPlacement, WorkingIndicatorOptions, WriteToolCallEvent, WriteToolResultEvent, } from "./types.ts";
+ export { defineTool, isBashToolResult, isEditToolResult, isFindToolResult, isGrepToolResult, isLsToolResult, isPowerShellToolResult, isReadToolResult, isToolCallEventType, isWriteToolResult, } from "./types.ts";
+ export { wrapRegisteredTool, wrapRegisteredTools } from "./wrapper.ts";
+-//# sourceMappingURL=index.d.ts.map
+\ No newline at end of file
++//# sourceMappingURL=index.d.ts.map
+diff --git a/dist/index.d.ts b/dist/index.d.ts
+index bb8acdb1..a99df77f 100644
+--- a/dist/index.d.ts
++++ b/dist/index.d.ts
+@@ -8,6 +8,7 @@ export { createEventBus, type EventBus, type EventBusController } from "./core/e
+ export type { AfterProviderResponseEvent, AgentActivityOutcome, AgentBeforeSettleEvent, AgentBeforeSettleEventResult, AgentEndEvent, AgentSettledEvent, AgentStartEvent, AgentToolResult, AgentToolUpdateCallback, AppKeybinding, AutocompleteProviderFactory, BashToolCallEvent, BeforeAgentStartCustomEvent, BeforeAgentStartEvent, BeforeAgentStartEventResult, BeforeAgentStartUserEvent, BeforeProviderHeadersEvent, BeforeProviderRequestEvent, BeforeProviderRequestEventResult, BoundaryContextPreview, BoundaryResult, BoundaryState, BuildSystemPromptOptions, CacheWarmingDecisionEvent, CacheWarmingDecisionEventResult, CompactionEntryDraft, CompactOptions, ContextEditEntryDraft, ContextEvent, ContextEventResult, ContextUsage, ContextWithSystemEvent, CustomEntryDraft, CustomMessageEntryDraft, CustomToolCallEvent, EditToolCallEvent, EntryRenderer, EntryRenderOptions, ExecOptions, ExecResult, ExecuteToolOptions, Extension, ExtensionActions, ExtensionAPI, ExtensionCommandContext, ExtensionCommandContextActions, ExtensionContext, ExtensionContextActions, ExtensionError, ExtensionEvent, ExtensionFactory, ExtensionFlag, ExtensionHandler, ExtensionRuntime, ExtensionShortcut, ExtensionToolContext, ExtensionUIContext, ExtensionUIDialogOptions, ExtensionVirtualModel, ExtensionWidgetOptions, FindToolCallEvent, GrepToolCallEvent, InlineExtension, InputEvent, InputEventResult, InputSource, KeybindingHints, KeybindingsManager, LoadExtensionsResult, LsToolCallEvent, MarkdownMessageType, MarkdownTransformContext, MarkdownTransformer, MarkdownTransformerOptions, MarkdownTransformerRegistration, McpServersChangeEvent, MessageEndEvent, MessageEndEventResult, MessageRenderer, MessageRenderOptions, MessageStartEvent, MessageUpdateEvent, ModelSelectEvent, ModelSelectSource, NormalizedBuildSystemPromptOptions, PowerShellToolCallEvent, ProjectTrustContext, ProjectTrustEvent, ProjectTrustEventDecision, ProjectTrustEventResult, ProjectTrustHandler, ProviderConfig, ProviderModelConfig, ProviderStreamEvent, ReadToolCallEvent, RegisteredCommand, RegisteredTool, ResolvedCommand, ResourcesDiscoverEvent, ResourcesDiscoverResult, SessionBeforeCompactEvent, SessionBeforeCompactResult, SessionBeforeForkEvent, SessionBeforeForkResult, SessionBeforeSwitchEvent, SessionBeforeSwitchResult, SessionBeforeTreeEvent, SessionBeforeTreeResult, SessionBoundaryDraft, SessionCompactEvent, SessionCompactFailedEvent, SessionInfoChangedEvent, SessionShutdownEvent, SessionStartEvent, SessionTreeEvent, SlashCommandInfo, SlashCommandSource, SourceInfo, TerminalInputHandler, ThinkingLevelSelectEvent, ToolAnnotations, ToolCallEvent, ToolCallEventResult, ToolDefinition, ToolExecutionEndEvent, ToolExecutionMode, ToolExecutionStartEvent, ToolExecutionUpdateEvent, ToolExposure, ToolInfo, ToolLoadout, ToolLoadoutChanges, ToolNamespace, ToolRendererResolver, ToolRenderers, ToolRenderResultOptions, ToolResultEvent, ToolResultEventResult, TurnEndEvent, TurnEndEventResult, TurnStartEvent, UIPromptEndEvent, UIPromptKind, UIPromptStartEvent, UserBashEvent, UserBashEventResult, WidgetPlacement, WorkingIndicatorOptions, WriteToolCallEvent, } from "./core/extensions/index.ts";
+ export { createExtensionRuntime, defineTool, discoverAndLoadExtensions, ExtensionRunner, isBashToolResult, isEditToolResult, isFindToolResult, isGrepToolResult, isLsToolResult, isPowerShellToolResult, isReadToolResult, isToolCallEventType, isWriteToolResult, wrapRegisteredTool, wrapRegisteredTools, } from "./core/extensions/index.ts";
+ export type { ReadonlyFooterDataProvider } from "./core/footer-data-provider.ts";
++export type { ModelFallbackEvent, ModelFallbackEventResult } from "./core/extensions/index.ts";
+ export type { RegisteredMcpServer } from "./core/mcp-servers.ts";
+ export { convertToLlm } from "./core/messages.ts";
+ export { ModelRegistry } from "./core/model-registry.ts";
+@@ -42,4 +43,4 @@ export { convertToPng } from "./utils/image-convert.ts";
+ export { formatDimensionNote, type ResizedImage, resizeImage } from "./utils/image-resize.ts";
+ export { detectSupportedImageMimeTypeFromFile } from "./utils/mime.ts";
+ export { getPowerShellConfig, getShellConfig } from "./utils/shell.ts";
+-//# sourceMappingURL=index.d.ts.map
+\ No newline at end of file
++//# sourceMappingURL=index.d.ts.map

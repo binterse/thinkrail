@@ -63,6 +63,7 @@ import {
 	sameModel,
 	TODO_REVIEW_FIX_CUSTOM_TYPE,
 } from "@thinkrail/contracts";
+import { createModelFallbackExtension } from "@thinkrail/pi-model-fallback";
 import { CodedError } from "@thinkrail/shared/codedError";
 import {
 	type BackgroundCommands,
@@ -81,6 +82,7 @@ import { displayTranscriptMessages } from "../history";
 import { logger } from "../log";
 import {
 	dataDir,
+	loadProjects,
 	loadSessionLifecycle,
 	loadSessionReceipts,
 	SESSION_LIFECYCLE_VERSION,
@@ -91,6 +93,7 @@ import {
 	saveSessionReceipts,
 } from "../persistence";
 import { removeWorkspaceResourceHistory } from "../resourceHistory";
+import { effectiveModelFallbackSettings, getModelFallbackSettings } from "../settings";
 import { trashFile } from "../trash";
 import {
 	anthropicExtraUsageWarningEnabledOnDisk,
@@ -1649,6 +1652,17 @@ async function createParentSessionInternal(
 		canDeliverCompletion: () =>
 			sessions.get(sessionId)?.commands === commands && canDeliverCompletion(),
 	});
+	const fallbackProjectId = resolveProjectId(workspaceId);
+	const fallbackIsChatsContainer = fallbackProjectId
+		? loadProjects().some((project) => project.id === fallbackProjectId && project.kind === "chats")
+		: false;
+	const modelFallbackExtension = createModelFallbackExtension(() => {
+		const effective = effectiveModelFallbackSettings(
+			getModelFallbackSettings(),
+			fallbackIsChatsContainer ? null : fallbackProjectId,
+		);
+		return { enabled: effective.enabled, models: effective.models };
+	});
 	try {
 		const result = await createAgentSession({
 			...agentOptions,
@@ -1659,6 +1673,7 @@ async function createParentSessionInternal(
 				() => skillAdmissionResolver(workspaceId),
 				generation.excludedSessionExtensionPaths,
 				[
+					modelFallbackExtension,
 					subagents.extension,
 					createBackgroundCommandsExtension({ service: commands }),
 					...mcpHost.extensions,

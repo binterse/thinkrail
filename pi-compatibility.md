@@ -4,7 +4,7 @@ type: architecture-design
 status: draft
 title: Pi compatibility — host adaptations and upgrade removal gates
 parent: architecture
-references: [submodule-server-agent, submodule-server-agent-mcp, submodule-server-history, submodule-server-templates, module-cli, module-desktop, submodule-web-chat, module-pi-subagents, module-pi-background-commands, module-pi-delegation]
+references: [submodule-server-agent, submodule-server-agent-mcp, submodule-server-history, submodule-server-templates, module-cli, module-desktop, submodule-web-chat, module-pi-subagents, module-pi-background-commands, module-pi-delegation, module-pi-model-fallback]
 tags: [pi, compatibility]
 ---
 
@@ -22,8 +22,9 @@ Pi 1.5.2 was checked against the installed dist (1.5.0 → 1.5.1 → 1.5.2; ever
 MCP extension, `package-manager.js`, `model-resolver.js` and pi-ai's providers diffed). **One gate is
 met**: pi now clears a delivered image-only queued message itself (#8612), so the host's
 `stuckEmptyDeliveries` override is gone; the text-only queue API still needs the queued-image copy, whose
-entry below now stands alone. **Two adaptations were added**: the
-cache-warming default and the shutdown wait for credential writes (both below). Everything else stays,
+entry below now stands alone. **Two adaptations were added by the 1.5.2 upgrade**: the
+cache-warming default and the shutdown wait for credential writes (both below). The model-fallback SDK
+patch is a separate, feature-scoped seam documented below. Everything else stays,
 with this evidence:
 
 - The Anthropic SSE framing defect is unchanged upstream (`consumeLine` is byte-identical; #10390 still
@@ -64,7 +65,8 @@ with this evidence:
   OpenRouter MiniMax/Mercury/Llama aliases, Fireworks `gpt-oss-120b`, Vercel Gemini batch aliases). The
   default `anthropic` model is now `claude-opus-5-5`. Release notes must say both and advise users to
   check their default and restored-chat model; unavailable models follow the existing selection rules in
-  [[submodule-server-agent]], and the host still does not surface Pi's `modelFallbackMessage`.
+  [[submodule-server-agent]]. The host's model-fallback behavior uses the explicit typed SDK patch below,
+  rather than pi's untyped `modelFallbackMessage` field.
 
 ## Upgrade contract
 
@@ -77,6 +79,23 @@ entry. A parity failure is evidence of drift, not permission to weaken the test.
 A public SDK replacement must preserve session isolation, cancellation, project trust, durable
 transcripts, and compiled/desktop behavior before the host implementation is removed. Importing a
 private dist path in production is not a replacement; such imports remain confined to parity tests.
+
+## Model fallback event seam
+
+**Owner:** [[submodule-server-agent]] and [[module-pi-model-fallback]]. The pinned pi 1.5.2 runner returns
+quota and exhausted retry errors without offering extensions a typed failed-response/abort hook or a
+per-request physical model override. The narrow patch adds `model_fallback` to the public extension event
+types and runner; the agent session dispatches it before ordinary retry failure, then retains the chosen
+physical model through tool steps and restores the user's selected model on the next consumed user message.
+Pi still owns retries, context preparation/compaction, transcript writes, tool execution and settlement.
+The portable policy package depends only on that patched SDK hook and standard ESM.
+
+**Removal gate:** upstream pi provides a typed per-request failure event with the failed `AssistantMessage`
+and abort signal, plus a supported physical-model override that preserves selected-model identity, model
+context limits and the next-user reset. Remove the patch and adapt the policy package only after the real
+AgentSession scripted-provider cases pass on the upstream API. On every pi upgrade, reapply or delete the
+patch from a clean package install and run the fallback session tests; unpatched vanilla pi 1.5.2 does not
+support this feature.
 
 ## MCP adaptations
 

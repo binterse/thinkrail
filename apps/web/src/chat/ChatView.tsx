@@ -42,6 +42,7 @@ import {
 	selectPickerModels,
 	selectSkillsStale,
 	selectSupportsMcp,
+	selectSupportsModelFallback,
 	selectWorkspaceById,
 	toast,
 	useAppStore,
@@ -206,6 +207,11 @@ export default function ChatView({
 				.flat()
 				.find((w) => w.id === workspaceId)?.projectId,
 	);
+	const modelFallbackProjectId = useAppStore((s) => {
+		const workspace = selectWorkspaceById(s, workspaceId);
+		return workspace?.kind === "chat" ? null : (workspace?.projectId ?? null);
+	});
+	const supportsModelFallback = useAppStore((s) => selectSupportsModelFallback(s));
 	const [skillsOpen, setSkillsOpen] = useState(false);
 	const skillsStale = useAppStore((s) => selectSkillsStale(s, workspaceId, sessionId));
 	const workspaceRoot = useAppStore(
@@ -1016,6 +1022,9 @@ export default function ChatView({
 				/>
 				<Composer
 					ref={composerRef}
+					workspaceId={workspaceId}
+					modelFallbackProjectId={modelFallbackProjectId}
+					supportsModelFallback={supportsModelFallback}
 					value={draft}
 					onChange={(v) => {
 						useAppStore.getState().setChatDraft(sessionId, v);

@@ -130,7 +130,7 @@ test("keeps background commands portable and out of browser imports", () => {
 	]);
 });
 
-test("keeps published pi packages free of host imports and unwired from the host until their wiring PR", () => {
+test("keeps published pi packages free of host imports and unwired until their wiring PR", () => {
 	const root = fixture();
 	write(root, "pi-extensions/visualize/index.ts", 'import { Type } from "typebox";');
 	expect(moduleBoundaryViolations(root)).toEqual([]);
@@ -151,6 +151,25 @@ test("keeps published pi packages free of host imports and unwired from the host
 		'pi-extensions/visualize/src/leak.ts: import "@thinkrail/server" creates forbidden pi-extensions/visualize -> packages/server edge',
 		'pi-extensions/visualize/src/leak.ts: import "pi-delegation" creates forbidden pi-extensions/visualize -> packages/pi-delegation edge',
 	]);
+});
+
+test("allows the private portable model-fallback policy package in the server composition", () => {
+	const root = fixture();
+	write(
+		root,
+		"pi-extensions/model-fallback/package.json",
+		JSON.stringify({ name: "@thinkrail/pi-model-fallback", private: true }),
+	);
+	write(
+		root,
+		"packages/server/package.json",
+		JSON.stringify({
+			name: "@thinkrail/server",
+			dependencies: { "@thinkrail/pi-model-fallback": "workspace:*" },
+		}),
+	);
+	write(root, "packages/server/src/modelFallback.ts", 'import "@thinkrail/pi-model-fallback";');
+	expect(moduleBoundaryViolations(root)).toEqual([]);
 });
 
 test("keeps artifact test infrastructure out of product code", () => {

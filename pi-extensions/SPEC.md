@@ -101,7 +101,8 @@ before the package's next version PR merges, not at bootstrap. Operational detai
 
 Order: visualize → ask-user-question → delegation + subagents → background-commands → spec-graph →
 todos. Not published:
-`pi-thinkrail-workflow` (workspace-internal), `pi-dag` (until it has a consumer).
+`pi-thinkrail-workflow` (workspace-internal), `pi-dag` (until it has a consumer),
+`model-fallback` (its current pi hook requires ThinkRail's SDK patch).
 
 ## Boundary
 
@@ -116,3 +117,4 @@ todos. Not published:
 | --- | --- | --- |
 | `visualize` | extension | `visualize` tool; `lovely-mermaid` for TUI box-drawing and the best-effort vanilla validation; exports `createVisualizeExtension({ validateMermaid })` so an embedder can inject a strict validator — ThinkRail does, from [[module-ext-visualize]]. Detail: [[module-pi-visualize]]. |
 | `ask-user-question` | extension | `ask_user_question` tool: a terminal questionnaire in pi's interactive mode, one dialog per question in RPC hosts; exports `createAskUserQuestionExtension({ ask, guidance, filePreviews, checkFile })` so an embedder can answer through its own UI and opt into file previews with its own path check (off in vanilla pi), and a runtime-import-free `./core`. ThinkRail composes it from [[module-ext-ask-user-question]] with an asker over its answer mailbox and the host's workspace-file check. Detail: [[module-pi-ask-user-question]]. |
+| `model-fallback` | library | Pure policy and a `model_fallback` extension adapter for quota and exhausted transient retries. No ThinkRail imports. Private until upstream pi offers the required typed seam; see [[module-pi-model-fallback]] and [[pi-compatibility]]. |

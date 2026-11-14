@@ -204,7 +204,14 @@ import {
 	sendScheduledPromptNow,
 	updateScheduledPrompt,
 } from "../scheduled-prompts";
-import { getConfig, noteRecentModel, updateConfig } from "../settings";
+import {
+	effectiveModelFallbackSettings,
+	getConfig,
+	getModelFallbackSettings,
+	noteRecentModel,
+	updateConfig,
+	updateModelFallbackSettings,
+} from "../settings";
 import { evictSpecIndex, evictSpecRoot, projectHasSpecs, specGraph } from "../spec";
 import { cancelSpeechInstall, installSpeech, removeSpeech } from "../speech";
 import {
@@ -1523,6 +1530,13 @@ const handlers: WsHandlers = {
 		const config = params.config;
 		return updateConfig(config);
 	},
+	"modelFallback.get": (params) => {
+		const workspace = params.workspaceId ? getWorkspace(params.workspaceId) : undefined;
+		const projectId = workspace && workspace.kind !== "chat" ? workspace.projectId : null;
+		const settings = getModelFallbackSettings();
+		return { settings, projectId, effective: effectiveModelFallbackSettings(settings, projectId) };
+	},
+	"modelFallback.update": (params) => updateModelFallbackSettings(params.settings),
 	"environment.get": () => hostEnvironmentStatus(),
 	"environment.update": (params) => updateHostEnvironment(params.environment),
 	"feedback.respond": (params) => {

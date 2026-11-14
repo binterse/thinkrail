@@ -50,7 +50,8 @@ e2e).
   deliberate second entry that avoids evaluating `host` (Bun-only: `Bun.serve`, `bun-pty`) under the
   node-run e2e worker. Not for `apps/*` use — the web/CLI boundary rules are unchanged.
 - **Allowed deps:** `contracts` (types + WS constants), `shared` (`shellEnv` and the Central adapter), `bun-pty`,
-  `@earendil-works/pi-coding-agent` + `@earendil-works/pi-ai` (runtime), `extension-api` (`./server` types)
+  `@earendil-works/pi-coding-agent` + `@earendil-works/pi-ai` (runtime),
+  `@thinkrail/pi-model-fallback` (portable policy extension), `extension-api` (`./server` types)
   + every `thinkrail-extensions/*` **server subpath only** (the registry's composition edge; the host no
   longer depends directly on a pi package an extension owns), `pino` + its pretty/rolling
   destinations (host diagnostics), `jsonc-parser` (targeted shared Pi configuration edits), Bun/Node.
@@ -195,6 +196,9 @@ through the `agent` barrel; there is no new resource-manager sibling or `agent` 
 while the manager owns its association with an actual parent session. What must outlive the host — the
 chat's finished records and command log tails — lives in the `resourceHistory` leaf, which only `agent`
 feeds and reads; `host` reaches it solely through the `agent` barrel.
+
+`agent` also composes the private portable `pi-model-fallback` package into each session. It contains only
+quota/transient error policy and the pi extension adapter; effective configuration remains server-owned.
 
 Subagent availability is also host-mediated: `settings` owns the global default, `workspaces` owns the
 optional local override, and `host` injects their effective value into `agent` plus requests live-session

@@ -46,6 +46,8 @@ function assistant(
 		streaming?: boolean;
 		stopReason?: AssistantMessage["stopReason"];
 		timestamp?: number;
+		provider?: string;
+		model?: string;
 	} = {},
 ): ChatTurn {
 	return {
@@ -57,6 +59,8 @@ function assistant(
 			content: blocks,
 			stopReason: opts.stopReason ?? "stop",
 			timestamp: opts.timestamp ?? 0,
+			...(opts.provider ? { provider: opts.provider } : {}),
+			...(opts.model ? { model: opts.model } : {}),
 		},
 	} as unknown as ChatTurn;
 }
@@ -194,6 +198,28 @@ describe("deriveRows grouping", () => {
 		const rows = deriveRows([assistant("assistant-long", [text(content)])], {}, false);
 
 		expect(rows).toEqual([{ kind: "markdown", id: "assistant-long:text:0", text: content }]);
+	});
+
+	test("keeps the responding model on assistant text rows", () => {
+		const rows = deriveRows(
+			[
+				assistant("fallback-answer", [text("continued")], {
+					provider: "deepseek",
+					model: "reasoner",
+				}),
+			],
+			{},
+			false,
+		);
+
+		expect(rows).toEqual([
+			{
+				kind: "markdown",
+				id: "fallback-answer:text:0",
+				text: "continued",
+				model: { provider: "deepseek", id: "reasoner" },
+			},
+		]);
 	});
 
 	test("a primary tool escapes the fold as its own row and breaks the run (bare implies primary)", () => {

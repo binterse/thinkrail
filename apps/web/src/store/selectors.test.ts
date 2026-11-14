@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
 	FILE_ACTIONS_PROTOCOL_VERSION,
+	MODEL_FALLBACK_PROTOCOL_VERSION,
 	MODEL_PICKER_PROTOCOL_VERSION,
 	type Project,
 	SEARCH_PROTOCOL_VERSION,
@@ -52,6 +53,7 @@ import {
 	selectReadyCompletionAck,
 	selectSkillsStale,
 	selectSupportsFileActions,
+	selectSupportsModelFallback,
 	selectSupportsModelPicker,
 	selectUnnamedChatFirstPrompts,
 	selectWorkspaceIsRunning,
@@ -849,6 +851,18 @@ describe("selectSupportsModelPicker", () => {
 			false,
 		);
 		expect(selectSupportsModelPicker({ protocolVersion: MODEL_PICKER_PROTOCOL_VERSION })).toBe(
+			true,
+		);
+	});
+});
+
+describe("selectSupportsModelFallback", () => {
+	test("requires the host model fallback protocol", () => {
+		expect(selectSupportsModelFallback({ protocolVersion: null })).toBe(false);
+		expect(
+			selectSupportsModelFallback({ protocolVersion: MODEL_FALLBACK_PROTOCOL_VERSION - 1 }),
+		).toBe(false);
+		expect(selectSupportsModelFallback({ protocolVersion: MODEL_FALLBACK_PROTOCOL_VERSION })).toBe(
 			true,
 		);
 	});

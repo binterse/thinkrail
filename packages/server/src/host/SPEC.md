@@ -906,6 +906,11 @@ enabled/confirmed choice before entering analytics attribution.
   Per-row backfill/review failures are logged and detached list/timer passes always catch their terminal
   rejection; lifecycle maintenance may degrade, but can never become an unhandled host-fatal promise.
 
+Model fallback has a separate settings store and publisher: `modelFallback.get` resolves the workspace's
+stable project identity, `modelFallback.update` persists the validated identity-only document, and
+`modelFallback.changed` broadcasts it to protocol-v116 clients. The host supplies effective settings to each
+agent session; a policy change takes effect on that session's next consumed user turn.
+
 ## Get right
 
 - Every registered WS command is debug-traced by **method name only** (`ws <method>` / `ws <method>
