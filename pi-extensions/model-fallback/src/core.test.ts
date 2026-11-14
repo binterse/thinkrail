@@ -18,8 +18,9 @@ test("classifies exhausted Go and Codex quotas but excludes auth and invalid-req
 });
 
 test("limits fallback eligibility to Go and Codex providers", () => {
-	expect(isFallbackProvider("opencode")).toBe(true);
+	expect(isFallbackProvider("opencode-go")).toBe(true);
 	expect(isFallbackProvider("openai-codex")).toBe(true);
+	expect(isFallbackProvider("opencode")).toBe(false);
 	expect(isFallbackProvider("anthropic")).toBe(false);
 });
 

@@ -24,7 +24,9 @@ stable project identity. Policy is snapshotted on the next consumed user message
 OpenAI Codex model can move to a configured physical model after quota exhaustion or exhausted transient
 retries. Pi owns each request, history, tool continuation, context limits and settlement. Its patched
 `model_fallback` seam keeps that physical model for the rest of the turn and resets on the next user message;
-the selected model remains unchanged, while assistant messages retain the actual responding model.
+the selected model remains unchanged, while assistant messages retain the actual responding model. A host prompt
+pin follows the fallback only until the next user message, including a queued follow-up. At settlement, the host
+records the chat's selected model after fallback responses so reopening the transcript restores that choice.
 
 ## Boundary
 

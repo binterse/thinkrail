@@ -30,8 +30,17 @@ async function awaitWithAbort<T>(
 	}
 }
 
+export interface ModelFallbackExtensionCallbacks {
+	resolveThinkingLevel?: () => ModelFallbackEventResult["thinkingLevel"];
+	onFallbackSelected?: (
+		model: { provider: string; id: string },
+		thinkingLevel: ModelFallbackEventResult["thinkingLevel"],
+	) => void;
+}
+
 export function createModelFallbackExtension(
 	resolvePolicy: () => ModelFallbackPolicy,
+	callbacks: ModelFallbackExtensionCallbacks = {},
 ): ExtensionFactory {
 	return (pi: ExtensionAPI) => {
 		let policy = resolvePolicy();
@@ -92,9 +101,11 @@ export function createModelFallbackExtension(
 					`Switching from ${event.failedModel.provider}/${event.failedModel.id} to ${model.provider}/${model.id} ${quotaExhausted ? "after the provider quota was exhausted." : "after provider retries were exhausted."}`,
 					"warning",
 				);
+				const thinkingLevel = callbacks.resolveThinkingLevel?.() ?? ctx.thinkingLevel;
+				callbacks.onFallbackSelected?.({ provider: model.provider, id: model.id }, thinkingLevel);
 				return {
 					model,
-					...(ctx.thinkingLevel ? { thinkingLevel: ctx.thinkingLevel } : {}),
+					...(thinkingLevel ? { thinkingLevel } : {}),
 				};
 			}
 			const attemptedModels = normalizeFallbackModels([

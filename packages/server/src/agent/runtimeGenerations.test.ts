@@ -354,6 +354,14 @@ describe("PI runtime generations", () => {
 				[change("generation-faux", "generation-model"), reply("other-faux", "other-model")],
 				{ provider: "other-faux", modelId: "other-model" },
 			],
+			[
+				[
+					change("generation-faux", "generation-model"),
+					reply("deepseek", "deepseek-chat"),
+					change("generation-faux", "generation-model"),
+				],
+				{ provider: "generation-faux", modelId: "generation-model" },
+			],
 			[[routed, change("router-faux", "gone")], { provider: "router-faux", modelId: "gone" }],
 			[
 				[change("router-faux", "auto"), routed, reply("router-faux", "auto", "pi-virtual")],

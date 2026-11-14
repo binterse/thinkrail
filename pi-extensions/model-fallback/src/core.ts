@@ -54,5 +54,5 @@ export function isFallbackWorthyError(errorMessage: string): boolean {
 }
 
 export function isFallbackProvider(provider: string): boolean {
-	return provider === "opencode" || provider === "openai-codex";
+	return provider === "opencode-go" || provider === "openai-codex";
 }

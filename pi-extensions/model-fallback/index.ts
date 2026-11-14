@@ -7,4 +7,7 @@ export {
 	modelRefKey,
 	normalizeFallbackModels,
 } from "./src/core";
-export { createModelFallbackExtension } from "./src/extension";
+export {
+	createModelFallbackExtension,
+	type ModelFallbackExtensionCallbacks,
+} from "./src/extension";

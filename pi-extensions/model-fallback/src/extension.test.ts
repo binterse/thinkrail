@@ -131,6 +131,7 @@ test("a quota uses the ordered fallback through tools, then a new user turn rest
 	]);
 	const selectedModel = runtime.getModel("openai-codex", "codex-main");
 	if (!selectedModel) throw new Error("Missing Codex fixture model");
+	const sessionManager = SessionManager.inMemory(cwd);
 	const { session } = await createAgentSession({
 		cwd,
 		agentDir,
@@ -138,7 +139,7 @@ test("a quota uses the ordered fallback through tools, then a new user turn rest
 		modelRuntime: runtime,
 		settingsManager,
 		resourceLoader,
-		sessionManager: SessionManager.inMemory(cwd),
+		sessionManager,
 	});
 	let concurrentSession: typeof session | undefined;
 	let concurrentUnsubscribe: (() => void) | undefined;
@@ -163,6 +164,11 @@ test("a quota uses the ordered fallback through tools, then a new user turn rest
 		);
 		expect(events.filter((event) => event.type === "agent_settled")).toHaveLength(1);
 		expect(session.getContextUsage()?.contextWindow).toBe(16_000);
+		expect(sessionManager.getBranch().at(-1)).toMatchObject({
+			type: "model_change",
+			provider: "openai-codex",
+			modelId: "codex-main",
+		});
 
 		await session.prompt("Use the selected model again.");
 		expect(codex.state.callCount).toBe(2);
