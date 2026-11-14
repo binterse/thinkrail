@@ -24,4 +24,4 @@ Closes #...
 - [ ] E2E suite passes for app-affecting changes (`bun run e2e`, or `bun run e2e:full` when touching agent behavior)
 - [ ] Before/after screenshots are included for frontend changes, or marked not applicable
 - [ ] Relevant `SPEC.md` / top-level specs updated to reflect any boundary, contract, or behavior change
-- [ ] I have read the [Contributing guide](../CONTRIBUTING.md) and agree to the [Code of Conduct](../CODE_OF_CONDUCT.md)
+- [ ] For upstream contributions, I have read the [upstream Contributing guide](https://github.com/JetBrains/thinkrail/blob/main/CONTRIBUTING.md) and agree to the [upstream Code of Conduct](https://github.com/JetBrains/thinkrail/blob/main/CODE_OF_CONDUCT.md)

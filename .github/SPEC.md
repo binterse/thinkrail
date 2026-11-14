@@ -26,16 +26,9 @@ pipeline.
   publication before required signing and verification; checksums over pre-signing bytes; or a
   release-only application build path that bypasses normal package commands.
 
-## Fork ownership and publication
-
-In `binterse/thinkrail`, CODEOWNERS names `@binterse`; this assigns review ownership without
-claiming any branch-protection requirement. Contribution templates identify the personal fork and
-route conduct reports to its maintainer through the root Code of Conduct.
-
-Website deployment, PR preview and cleanup, and npm publication jobs run only when
-`github.repository == 'JetBrains/thinkrail'`. Preview jobs also retain their same-repository PR
-condition. Ordinary CI remains available in the fork. Fork documentation and configuration changes
-stay separate from functional commits intended for upstream contribution.
+Website deployment, PR preview and cleanup, and npm publication jobs run only in
+`JetBrains/thinkrail`. Preview jobs retain their same-repository PR condition; ordinary CI remains
+available in forks.
 
 ## CI
 

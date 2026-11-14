@@ -6,9 +6,6 @@ labels: enhancement
 assignees: ''
 ---
 
-This template is for the unofficial `binterse/thinkrail` fork. Describe the change you want in this fork.
-See [CONTRIBUTING.md](https://github.com/binterse/thinkrail/blob/main/CONTRIBUTING.md) for the distinction between fork and upstream contributions.
-
 ## Problem
 
 What problem are you trying to solve? What's the motivation?
