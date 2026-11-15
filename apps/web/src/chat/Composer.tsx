@@ -11,6 +11,7 @@ import {
 import type {
 	ComposerGrowthLimit,
 	ImageContent,
+	ModelFallbackSettings,
 	PromptModelSelection,
 	ScheduledPromptRecord,
 	ThinkingLevel,
@@ -59,6 +60,7 @@ import {
 	type ModelEffortPickerHandle,
 	type ModelSelection,
 } from "./ModelEffortPicker";
+import { ModelFallbackControl } from "./ModelFallbackControl";
 import { isModelCommand, parseModelCommand } from "./nativeCommands";
 import {
 	imagePasteDropHandlers,
@@ -177,6 +179,16 @@ function highlightTint(state: SlotHighlightState): string {
 }
 
 interface ComposerProps {
+	supportsModelFallback: boolean;
+	modelFallback: {
+		projectId: string | null;
+		open: boolean;
+		onOpenChange: (open: boolean) => void;
+		settings: ModelFallbackSettings | null;
+		error: string | null;
+		saving: boolean;
+		onSave: (settings: ModelFallbackSettings) => void;
+	};
 	value: string;
 	onChange: (value: string) => void;
 	imageOwner?: PromptImagesOwner;
@@ -241,6 +253,8 @@ export interface ComposerHandle {
 
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
 	{
+		supportsModelFallback,
+		modelFallback,
 		value,
 		onChange,
 		imageOwner,
@@ -721,6 +735,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 							preferences={modelPreferences}
 							className="max-w-[60vw] px-4 sm:max-w-[320px]"
 						/>
+						{supportsModelFallback ? (
+							<ModelFallbackControl {...modelFallback} models={models} />
+						) : null}
 					</div>
 					<div
 						className={cn(

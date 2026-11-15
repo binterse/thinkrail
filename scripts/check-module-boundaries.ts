@@ -40,6 +40,7 @@ const MODULE_RULES: readonly ModuleRule[] = [
 			"packages/pi-subagents",
 			"packages/pi-thinkrail-workflow",
 			"packages/pi-todos",
+			"pi-extensions/model-fallback",
 			"packages/extension-api",
 		],
 	},

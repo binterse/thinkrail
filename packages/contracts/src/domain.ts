@@ -1509,6 +1509,32 @@ export interface AppConfig extends ThemePreference {
 	fontWeightOffset: number;
 }
 
+export interface ModelFallbackProjectOverride {
+	mode: "disabled" | "custom";
+	models?: ModelFallbackModelRef[];
+}
+
+export const MODEL_FALLBACK_MODELS_LIMIT = 20;
+
+export interface ModelFallbackModelRef {
+	provider: string;
+	id: string;
+}
+
+/** Host-owned, cross-client model fallback settings persisted separately from app appearance settings. */
+export interface ModelFallbackSettings {
+	version: 1;
+	enabled: boolean;
+	models: ModelFallbackModelRef[];
+	projects: Record<string, ModelFallbackProjectOverride>;
+}
+
+export interface EffectiveModelFallbackSettings {
+	enabled: boolean;
+	mode: "global" | "disabled" | "custom";
+	models: ModelFallbackModelRef[];
+}
+
 export type ExtensionSettingValues = Record<string, Record<string, boolean>>;
 
 export interface ExtensionSettingDescriptor {

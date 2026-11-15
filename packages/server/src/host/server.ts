@@ -132,7 +132,7 @@ import {
 } from "../projects";
 import { reanchorWorkspace, resolveCommentFromAgent, setReviewPublisher } from "../reviews";
 import { startScheduledPrompts, stopScheduledPrompts } from "../scheduled-prompts";
-import { getConfig, setSettingsPublisher } from "../settings";
+import { getConfig, setModelFallbackPublisher, setSettingsPublisher } from "../settings";
 import {
 	createSpeechRelay,
 	initSpeech,
@@ -504,6 +504,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 				if (ws.data.protocolVersion >= CONTINUATION_PROTOCOL_VERSION)
 					ws.subscribe(WS_CHANNELS.chatContinuation);
 				ws.subscribe(WS_CHANNELS.settingsChanged);
+				ws.subscribe(WS_CHANNELS.modelFallbackChanged);
 				if (hostUpdate) ws.subscribe(WS_CHANNELS.hostUpdateAvailable);
 				ws.subscribe(WS_CHANNELS.reviewChanged);
 				ws.subscribe(WS_CHANNELS.reviewFailed);
@@ -1057,6 +1058,12 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 		if (appliedUpdate.disabledPackages !== undefined) publishPiPackagesChanged();
 		if (appliedUpdate.otherAgentSkills !== undefined) void refreshSkillAdmission();
 	});
+	setModelFallbackPublisher((settings) => {
+		server.publish(
+			WS_CHANNELS.modelFallbackChanged,
+			JSON.stringify({ channel: WS_CHANNELS.modelFallbackChanged, data: settings }),
+		);
+	});
 
 	setSessionCreatedPublisher((payload: SessionCreatedPayload) => {
 		publishScoped(WS_CHANNELS.sessionCreated, payload, { workspaceId: payload.workspaceId });
@@ -1293,6 +1300,7 @@ function restoreSeamDefaults(): void {
 	setRequestReviewHandler(null);
 	setTitleToolHost(null);
 	setSettingsPublisher(null);
+	setModelFallbackPublisher(null);
 	setSessionCreatedPublisher(() => {});
 	setSessionStatePublisher(() => {});
 	setSessionDeletedPublisher(() => {});

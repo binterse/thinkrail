@@ -45,6 +45,7 @@ import {
 	LOCALES_PROTOCOL_VERSION,
 	MCP_PROTOCOL_VERSION,
 	MCP_TOOL_GRANTS_PROTOCOL_VERSION,
+	MODEL_FALLBACK_PROTOCOL_VERSION,
 	MODEL_PICKER_PROTOCOL_VERSION,
 	normalizeSessionTitle,
 	ONBOARDING_PROTOCOL_VERSION,
@@ -103,6 +104,14 @@ test("scheduled prompts are introduced after continuation support", () => {
 	expect(SCHEDULED_PROMPTS_PROTOCOL_VERSION).toBeGreaterThan(CONTINUATION_PROTOCOL_VERSION);
 	expect(PROTOCOL_VERSION).toBeGreaterThanOrEqual(SCHEDULED_PROMPTS_PROTOCOL_VERSION);
 	expect(WS_METHODS.scheduledPromptsCreate).toBe("scheduledPrompts.create");
+});
+
+test("model fallback is introduced after scheduled prompts", () => {
+	expect(MODEL_FALLBACK_PROTOCOL_VERSION).toBe(116);
+	expect(MODEL_FALLBACK_PROTOCOL_VERSION).toBeGreaterThan(SCHEDULED_PROMPTS_PROTOCOL_VERSION);
+	expect(PROTOCOL_VERSION).toBeGreaterThanOrEqual(MODEL_FALLBACK_PROTOCOL_VERSION);
+	expect(WS_METHODS.modelFallbackGet).toBe("modelFallback.get");
+	expect(WS_CHANNELS.modelFallbackChanged).toBe("modelFallback.changed");
 });
 
 test("Files host actions are pinned to v104", () => {

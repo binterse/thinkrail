@@ -39,6 +39,7 @@ import type {
 import { readToolResponseMessage, TOOL_RESPONSE_CUSTOM_TYPE } from "@thinkrail/contracts";
 import { interactiveTools } from "../extensions";
 import { defaultSessionDirFor, writeFixtureSession } from "../history/testFixtures";
+import { getModelFallbackSettings, updateModelFallbackSettings } from "../settings";
 import { setTrashImplementationForTests } from "../trash";
 import {
 	abortSession,
@@ -4758,6 +4759,120 @@ test("concurrent idle prompts keep a pinned model with its own prompt admission"
 		runtime.unregisterProvider("prompt-admission-b");
 	}
 }, 30000);
+
+test("a pinned Go prompt keeps its fallback through tools and restores the chat model", async () => {
+	const originalSettings = getModelFallbackSettings();
+	const go = createFauxCore({
+		provider: "opencode-go",
+		api: "fallback-test-opencode-go",
+		models: [{ ...modelDef("go-model"), reasoning: true }],
+		tokensPerSecond: 2_000,
+	});
+	const deepseek = createFauxCore({
+		provider: "deepseek",
+		api: "fallback-test-deepseek",
+		models: [{ ...modelDef("deepseek-model"), reasoning: true }],
+		tokensPerSecond: 2_000,
+	});
+	const cwd = tmpCwd("trpi-pinned-go-fallback-");
+	const workspaceId = `ws-pinned-go-fallback-${crypto.randomUUID()}`;
+	writeFileSync(join(cwd, "answer.txt"), "Go pinned response");
+	let sessionId: string | undefined;
+	let releaseFallback!: () => void;
+	const selectedModelCalls = fauxA.state.callCount;
+	try {
+		runtime.registerProvider("opencode-go", {
+			...cfg(go, "go-model"),
+			models: [{ ...modelDef("go-model"), reasoning: true, api: go.api }],
+		});
+		runtime.registerProvider("deepseek", {
+			...cfg(deepseek, "deepseek-model"),
+			models: [{ ...modelDef("deepseek-model"), reasoning: true, api: deepseek.api }],
+		});
+		updateModelFallbackSettings({
+			version: 1,
+			enabled: true,
+			models: [{ provider: "deepseek", id: "deepseek-model" }],
+			projects: {},
+		});
+		go.setResponses([
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage: '429: {"type":"GoUsageLimitError","message":"usage limit reached"}',
+			}),
+		]);
+		let fallbackStarted!: () => void;
+		const fallbackRequestStarted = new Promise<void>((resolve) => {
+			fallbackStarted = resolve;
+		});
+		const fallbackResponseReleased = new Promise<void>((resolve) => {
+			releaseFallback = resolve;
+		});
+		deepseek.setResponses([
+			async () => {
+				fallbackStarted();
+				await fallbackResponseReleased;
+				return fauxAssistantMessage(fauxToolCall("read", { path: join(cwd, "answer.txt") }));
+			},
+			fauxAssistantMessage("The fallback read the file once."),
+		]);
+		fauxA.setResponses([
+			fauxAssistantMessage("The queued follow-up used the chat model."),
+			fauxAssistantMessage("The chat model answered the next turn."),
+		]);
+
+		const session = await createSession({
+			cwd,
+			workspaceId,
+			model: toWireModel(fauxA.getModel()),
+		});
+		sessionId = session.sessionId;
+		const pinnedRun = promptSession(sessionId, "Use the pinned Go model.", undefined, {
+			modelSelection: {
+				model: { provider: "opencode-go", id: "go-model" },
+				thinkingLevel: "high",
+			},
+		});
+		await fallbackRequestStarted;
+		await followUpSession(sessionId, "Continue with the selected chat model.");
+		releaseFallback();
+		await pinnedRun;
+
+		const firstTurn = await getSessionMessages(sessionId, workspaceId, cwd);
+		expect(go.state.callCount).toBe(1);
+		expect(deepseek.state.callCount).toBe(2);
+		expect(fauxA.state.callCount - selectedModelCalls).toBe(1);
+		expect(firstTurn.messages.filter((message) => message.role === "toolResult")).toHaveLength(1);
+		expect(firstTurn.messages.filter((message) => message.role === "assistant")).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					provider: "deepseek",
+					model: "deepseek-model",
+					stopReason: "stop",
+				}),
+				expect.objectContaining({
+					provider: "fauxa",
+					model: "fauxa",
+					content: expect.arrayContaining([
+						expect.objectContaining({ text: "The queued follow-up used the chat model." }),
+					]),
+				}),
+			]),
+		);
+		expect(firstTurn.summary.model).toMatchObject({ provider: "fauxa", id: "fauxa" });
+
+		await promptSession(sessionId, "Try the selected chat model again.");
+		expect(fauxA.state.callCount - selectedModelCalls).toBe(2);
+		expect(go.state.callCount).toBe(1);
+		expect(deepseek.state.callCount).toBe(2);
+	} finally {
+		releaseFallback?.();
+		if (sessionId && hasSession(sessionId)) await removeSession(sessionId);
+		updateModelFallbackSettings(originalSettings);
+		runtime.unregisterProvider("opencode-go");
+		runtime.unregisterProvider("deepseek");
+	}
+});
 
 test("scheduled follow-ups keep per-prompt provider/model/reasoning behind existing queue entries", async () => {
 	const a = createFauxCore({

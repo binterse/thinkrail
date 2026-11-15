@@ -26,6 +26,7 @@
 		"@thinkrail/extension-api": "workspace:*",
 		"@thinkrail/locales": "workspace:*",
 		"@thinkrail/shared": "workspace:*",
+		"@thinkrail/pi-model-fallback": "workspace:*",
 		"bun-pty": "0.5.2",
 		"jsonc-parser": "3.3.1",
 		"pi-background-commands": "workspace:*",

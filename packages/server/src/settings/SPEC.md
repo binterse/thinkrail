@@ -9,7 +9,7 @@ depends-on: [module-contracts]
 
 ## Responsibility
 
-The server-synchronized app config: opaque fixed-theme selection, fixed/system mode and optional light/dark
+The server-synchronized app config and the separate model-fallback policy: opaque fixed-theme selection, fixed/system mode and optional light/dark
 pair, additional-analytics preference and first-run dialog completion marker, host-owned new-chat model and
 effort defaults, terminal replay budget and Windows shell preference, chat composer growth preset, chat/file
 visual line widths plus independent pane bounds, bounded custom layout-preset catalog, JetBrains quota
@@ -73,6 +73,11 @@ interval (`1–3600`, default 30), because those values govern host process cade
   catalog reports (`PiPackageSummary.identity`); it exists because pi has no "whole package off" setting
   and writing pi's per-resource filters would reset a user's own filters on re-enable. Validation,
   dedupe and unknown-key tolerance are identical to `disabledExtensions`.
+- Model fallback uses the separately persisted `model-fallback.json`, not `AppConfig`: global enablement
+  defaults on with an empty ordered list; project ids select inheritance, disabled mode, or a project-owned
+  list. `modelFallback.get` resolves the active workspace to its stable project id, and updates persist
+  before broadcasting the complete value on `modelFallback.changed`. No credential or raw model fields are
+  accepted. Each live session snapshots the effective policy at the next consumed user message.
 - `locale` is `"system"` (default) or a canonical BCP-47 tag (`isLocalePreference`: `pt-BR`, not
   `pt-br`). Settings never checks that a language is available — bundled catalogs belong to the web build
   and local files to [[submodule-server-locales]] — so a tag whose file was deleted persists and returns

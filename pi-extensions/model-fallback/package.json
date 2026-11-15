@@ -1,0 +1,29 @@
+{
+	"name": "@thinkrail/pi-model-fallback",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"files": [
+		"index.ts",
+		"src/**/*.ts",
+		"!src/**/*.test.ts",
+		"SPEC.md"
+	],
+	"exports": {
+		".": "./index.ts",
+		"./core": "./src/core.ts"
+	},
+	"peerDependencies": {
+		"@earendil-works/pi-coding-agent": "*"
+	},
+	"devDependencies": {
+		"@earendil-works/pi-ai": "catalog:",
+		"@earendil-works/pi-coding-agent": "catalog:",
+		"@types/bun": "catalog:",
+		"typescript": "catalog:"
+	},
+	"scripts": {
+		"typecheck": "tsc --noEmit",
+		"test": "bun test"
+	}
+}

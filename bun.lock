@@ -345,6 +345,7 @@
         "@thinkrail/ext-web-access": "workspace:*",
         "@thinkrail/extension-api": "workspace:*",
         "@thinkrail/locales": "workspace:*",
+        "@thinkrail/pi-model-fallback": "workspace:*",
         "@thinkrail/shared": "workspace:*",
         "bun-pty": "0.5.2",
         "jsonc-parser": "3.3.1",
@@ -448,6 +449,19 @@
         "typebox": "*",
       },
     },
+    "pi-extensions/model-fallback": {
+      "name": "@thinkrail/pi-model-fallback",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@earendil-works/pi-ai": "catalog:",
+        "@earendil-works/pi-coding-agent": "catalog:",
+        "@types/bun": "catalog:",
+        "typescript": "catalog:",
+      },
+      "peerDependencies": {
+        "@earendil-works/pi-coding-agent": "*",
+      },
+    },
     "pi-extensions/visualize": {
       "name": "@thinkrail/pi-visualize",
       "version": "0.2.1",
@@ -530,6 +544,7 @@
   "patchedDependencies": {
     "@earendil-works/pi-ai@1.5.2": "patches/@earendil-works%2Fpi-ai@1.5.2.patch",
     "@pierre/diffs@1.6.4": "patches/@pierre%2Fdiffs@1.6.4.patch",
+    "@earendil-works/pi-coding-agent@1.5.2": "patches/@earendil-works%2Fpi-coding-agent@1.5.2.patch",
   },
   "overrides": {
     "dompurify": "3.4.17",
@@ -1245,6 +1260,8 @@
     "@thinkrail/locales": ["@thinkrail/locales@workspace:packages/locales"],
 
     "@thinkrail/pi-ask-user-question": ["@thinkrail/pi-ask-user-question@workspace:pi-extensions/ask-user-question"],
+
+    "@thinkrail/pi-model-fallback": ["@thinkrail/pi-model-fallback@workspace:pi-extensions/model-fallback"],
 
     "@thinkrail/pi-visualize": ["@thinkrail/pi-visualize@workspace:pi-extensions/visualize"],
 

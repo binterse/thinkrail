@@ -13,7 +13,7 @@ Durable host state—projects, workspaces, cross-frontend app config, terminal c
 
 ## Boundary
 
-- **Owns:** `dataDir()` (`THINKRAIL_DATA_DIR` for dev/e2e isolation, else `~/.thinkrail`, always resolved to an absolute path — a relative override would otherwise land managed worktrees in two places: `mkdirSync` resolves it against the host's cwd, `git -C <project>` against the project); project/workspace/config load-save operations and fieldwise validation over `DEFAULT_CONFIG` while preserving unknown top-level extension fields; versioned atomic `session-lifecycle.json` (latest observed settled completion + explicit-cancel run id), `session-receipts.json` (first-install baseline complete + session→handled completion id) and `turns.json` (per-workspace agent-run change sets, owned by `turns`); server-only `installation.json` (`{ id, appInstalled?: true }`) and campaign-only `attribution.json`; the structural load/save of `environment.json` (`loadHostEnvironment` / `saveHostEnvironment`, atomic, mode `0600`, semantics owned by [[submodule-server-environment]]). The non-rotating install UUID never crosses the wire.
+- **Owns:** `dataDir()` (`THINKRAIL_DATA_DIR` for dev/e2e isolation, else `~/.thinkrail`, always resolved to an absolute path — a relative override would otherwise land managed worktrees in two places: `mkdirSync` resolves it against the host's cwd, `git -C <project>` against the project); project/workspace/config load-save operations and fieldwise validation over `DEFAULT_CONFIG` while preserving unknown top-level extension fields; versioned atomic `session-lifecycle.json` (latest observed settled completion + explicit-cancel run id), `session-receipts.json` (first-install baseline complete + session→handled completion id) and `turns.json` (per-workspace agent-run change sets, owned by `turns`); server-only `installation.json` (`{ id, appInstalled?: true }`) and campaign-only `attribution.json`; versioned atomic `model-fallback.json` (identity-only global/project routing policy, owned by `settings`); the structural load/save of `environment.json` (`loadHostEnvironment` / `saveHostEnvironment`, atomic, mode `0600`, semantics owned by [[submodule-server-environment]]). The non-rotating install UUID never crosses the wire.
 - **Data folders:** `listDataFolder` (sorted, dot-files skipped, filtered by the owner), `fileStatSignature`, and
   `watchDataFolder`, the once-a-second folder-signature poll [[submodule-server-locales]] explains: it creates
   the folder once at start (reporting a failure to the owner), nudges once per changed listing, and never
@@ -81,6 +81,12 @@ read.
 Analytics config preserves a saved boolean preference and a valid `analyticsConsentConfirmed` boolean
 independently; absent/malformed values default false. A preference-only write never implies completion.
 Settings owns initial preference priming and preference-plus-confirmation writes.
+
+`model-fallback.json` is a separate version-1 file with a strict `{ version, enabled, models, projects }`
+shape. Each model entry stores only nonblank `{ provider, id }`; project keys are stable ThinkRail project ids,
+so worktrees share one override. Unknown keys, credential-shaped fields, malformed models and unsupported
+versions are never rewritten as valid settings. Missing or unreadable settings use the enabled, empty-list
+default. Saves use the same atomic owner-only JSON replacement as other user state.
 
 An absent `otherAgentSkills` defaults by install age: `true` in a stored config that lacks it, since only a host
 from before the switch writes one (it loaded other agents' skills, #1210), and `false` with no readable config.

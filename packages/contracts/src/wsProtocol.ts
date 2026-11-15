@@ -12,6 +12,7 @@ import type {
 	DetectedAccount,
 	DiffStats,
 	EditorInfo,
+	EffectiveModelFallbackSettings,
 	ExistingWorktreeCandidate,
 	ExtensionCatalogEntry,
 	FileNode,
@@ -40,6 +41,7 @@ import type {
 	McpStatusSnapshot,
 	MergeMethod,
 	MergePrResult,
+	ModelFallbackSettings,
 	OpenBranchReview,
 	OpenPrResult,
 	PiPackageResourceType,
@@ -141,7 +143,7 @@ export type TemplateReadLocation =
 	| { projectId: string; workspaceId?: never }
 	| { workspaceId?: never; projectId?: never };
 
-export const PROTOCOL_VERSION = 115;
+export const PROTOCOL_VERSION = 116;
 export const EXTENSION_EDITOR_TEXT_PROTOCOL_VERSION = 115;
 export const QUESTION_PANEL_PROTOCOL_VERSION = 114;
 export const SPEC_SECTIONS_PROTOCOL_VERSION = 113;
@@ -150,6 +152,7 @@ export const CACHE_WARMING_SETTINGS_PROTOCOL_VERSION = 111;
 export const CONTINUATION_PROTOCOL_VERSION = 110;
 export const CHATS_PROTOCOL_VERSION = 109;
 export const SCHEDULED_PROMPTS_PROTOCOL_VERSION = 115;
+export const MODEL_FALLBACK_PROTOCOL_VERSION = 116;
 export const FILE_ACTIONS_PROTOCOL_VERSION = 104;
 export const OTHER_AGENT_SKILLS_PROTOCOL_VERSION = 108;
 export const SPEECH_PROTOCOL_VERSION = 107;
@@ -555,6 +558,8 @@ export const WS_METHODS = {
 	providerJbcentralQuota: "provider.jbcentralQuota",
 	hostUpdate: "host.update",
 	settingsUpdate: "settings.update",
+	modelFallbackGet: "modelFallback.get",
+	modelFallbackUpdate: "modelFallback.update",
 	environmentGet: "environment.get",
 	environmentUpdate: "environment.update",
 	feedbackRespond: "feedback.respond",
@@ -619,6 +624,7 @@ export const WS_CHANNELS = {
 	chatContinuation: "chat.continuation",
 	searchTextResults: "search.textResults",
 	settingsChanged: "settings.changed",
+	modelFallbackChanged: "modelFallback.changed",
 	hostUpdateAvailable: "host.updateAvailable",
 	feedbackInterview: "feedback.interview",
 	feedbackGithubStar: "feedback.githubStar",
@@ -1389,6 +1395,18 @@ export interface WsMethodMap {
 	"provider.jbcentralQuota": { params: { force?: boolean }; result: JbcentralQuotaSnapshot };
 	"host.update": { params: Record<string, never>; result: Ack };
 	"settings.update": { params: { config: AppConfigUpdate }; result: AppConfig };
+	"modelFallback.get": {
+		params: { workspaceId?: string };
+		result: {
+			settings: ModelFallbackSettings;
+			projectId: string | null;
+			effective: EffectiveModelFallbackSettings;
+		};
+	};
+	"modelFallback.update": {
+		params: { settings: ModelFallbackSettings };
+		result: ModelFallbackSettings;
+	};
 	"environment.get": { params: Record<string, never>; result: HostEnvironmentStatus };
 	"environment.update": {
 		params: { environment: HostEnvironment };

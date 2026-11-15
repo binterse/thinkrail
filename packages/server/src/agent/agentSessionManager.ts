@@ -63,6 +63,7 @@ import {
 	sameModel,
 	TODO_REVIEW_FIX_CUSTOM_TYPE,
 } from "@thinkrail/contracts";
+import { createModelFallbackExtension } from "@thinkrail/pi-model-fallback";
 import { CodedError } from "@thinkrail/shared/codedError";
 import {
 	type BackgroundCommands,
@@ -81,6 +82,7 @@ import { displayTranscriptMessages } from "../history";
 import { logger } from "../log";
 import {
 	dataDir,
+	loadProjects,
 	loadSessionLifecycle,
 	loadSessionReceipts,
 	SESSION_LIFECYCLE_VERSION,
@@ -91,6 +93,7 @@ import {
 	saveSessionReceipts,
 } from "../persistence";
 import { removeWorkspaceResourceHistory } from "../resourceHistory";
+import { effectiveModelFallbackSettings, getModelFallbackSettings } from "../settings";
 import { trashFile } from "../trash";
 import {
 	anthropicExtraUsageWarningEnabledOnDisk,
@@ -196,6 +199,7 @@ interface Entry {
 	dequeuedSteering: TrackedQueuedMessage[];
 	dequeuedFollowUps: TrackedQueuedMessage[];
 	activePromptModelSelection?: PromptModelSelection | undefined;
+	activePromptFallbackSelection?: PromptModelSelection | undefined;
 	nextPromptModelSelection?: PromptModelSelection | undefined;
 	clearingQueue: boolean;
 	priorFollowUpMode?: "all" | "one-at-a-time" | undefined;
@@ -1364,6 +1368,7 @@ async function prepareSessionEntry(
 		if (event.type === "agent_settled") {
 			entry.lastSettlement = terminal;
 			entry.activePromptModelSelection = undefined;
+			entry.activePromptFallbackSelection = undefined;
 			try {
 				recordSettlement(entry, terminal);
 			} catch (error) {
@@ -1386,7 +1391,7 @@ async function prepareSessionEntry(
 	const previousPrepareRequest = session.agent.prepareRequest;
 	session.agent.prepareRequest = async (request, signal) => {
 		const prepared = (await previousPrepareRequest?.(request, signal)) ?? undefined;
-		const selection = entry.activePromptModelSelection;
+		const selection = entry.activePromptFallbackSelection ?? entry.activePromptModelSelection;
 		if (!selection) return prepared;
 		return {
 			...prepared,
@@ -1396,6 +1401,7 @@ async function prepareSessionEntry(
 	};
 	const unsubscribeQueueSelection = session.agent.subscribe((event) => {
 		if (event.type === "message_start" && event.message.role === "user") {
+			entry.activePromptFallbackSelection = undefined;
 			const text = userContentText(event.message.content);
 			const steering = entry.dequeuedSteering.find((item) => item.text === text);
 			const consumed = entry.dequeuedFollowUps.find((item) => item.text === text);
@@ -1649,6 +1655,32 @@ async function createParentSessionInternal(
 		canDeliverCompletion: () =>
 			sessions.get(sessionId)?.commands === commands && canDeliverCompletion(),
 	});
+	const fallbackProjectId = resolveProjectId(workspaceId);
+	const fallbackIsChatsContainer = fallbackProjectId
+		? loadProjects().some((project) => project.id === fallbackProjectId && project.kind === "chats")
+		: false;
+	const modelFallbackExtension = createModelFallbackExtension(
+		() => {
+			const effective = effectiveModelFallbackSettings(
+				getModelFallbackSettings(),
+				fallbackIsChatsContainer ? null : fallbackProjectId,
+			);
+			return { enabled: effective.enabled, models: effective.models };
+		},
+		{
+			resolveThinkingLevel: () =>
+				sessions.get(sessionId)?.activePromptModelSelection?.thinkingLevel,
+			onFallbackSelected: (model, thinkingLevel) => {
+				const entry = sessions.get(sessionId);
+				const selection = entry?.activePromptModelSelection;
+				if (entry && selection)
+					entry.activePromptFallbackSelection = {
+						model,
+						thinkingLevel: thinkingLevel ?? selection.thinkingLevel,
+					};
+			},
+		},
+	);
 	try {
 		const result = await createAgentSession({
 			...agentOptions,
@@ -1659,6 +1691,7 @@ async function createParentSessionInternal(
 				() => skillAdmissionResolver(workspaceId),
 				generation.excludedSessionExtensionPaths,
 				[
+					modelFallbackExtension,
 					subagents.extension,
 					createBackgroundCommandsExtension({ service: commands }),
 					...mcpHost.extensions,

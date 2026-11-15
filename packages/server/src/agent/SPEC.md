@@ -4,7 +4,7 @@ type: submodule-design
 status: active
 title: agent — in-process pi sessions
 parent: module-server
-depends-on: [module-contracts, module-pi-delegation, module-pi-subagents, module-pi-background-commands]
+depends-on: [module-contracts, module-pi-delegation, module-pi-subagents, module-pi-background-commands, module-pi-model-fallback]
 references: [module-spec-graph, central-integration, submodule-server-extensions, submodule-server-agent-packages]
 tags: [pi]
 ---
@@ -18,6 +18,15 @@ cross-agent skill discovery + a pre-session skill catalog), the **extension-UI b
 in-process `uiContext` dialog calls into WS frames, the **`ask_user_question`** answer mailbox and
 answer-injection path behind the ask-user-question extension, and the **restart repair** that keeps
 re-opened transcripts provider-valid.
+
+Each chat composes the portable `pi-model-fallback` policy extension using the effective settings for its
+stable project identity. Policy is snapshotted on the next consumed user message; a selected OpenCode Go or
+OpenAI Codex model can move to a configured physical model after quota exhaustion or exhausted transient
+retries. Pi owns each request, history, tool continuation, context limits and settlement. Its patched
+`model_fallback` seam keeps that physical model for the rest of the turn and resets on the next user message;
+the selected model remains unchanged, while assistant messages retain the actual responding model. A host prompt
+pin follows the fallback only until the next user message, including a queued follow-up. At settlement, the host
+records the chat's selected model after fallback responses so reopening the transcript restores that choice.
 
 ## Boundary
 

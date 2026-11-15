@@ -27,6 +27,9 @@ import {
 	isSettleIdleDays,
 	isSubagentMaxConcurrent,
 	isTerminalWindowsShell,
+	MODEL_FALLBACK_MODELS_LIMIT,
+	type ModelFallbackModelRef,
+	type ModelFallbackSettings,
 	normalizeFontSettings,
 	normalizeThemePreference,
 	type Project,
@@ -741,6 +744,64 @@ export function loadConfig(): AppConfig {
 
 export function saveConfig(config: AppConfig): void {
 	writeJsonAtomic("config.json", config);
+}
+
+export const MODEL_FALLBACK_SETTINGS_VERSION = 1 as const;
+export const DEFAULT_MODEL_FALLBACK_SETTINGS: ModelFallbackSettings = {
+	version: MODEL_FALLBACK_SETTINGS_VERSION,
+	enabled: true,
+	models: [],
+	projects: {},
+};
+
+function validModelFallbackRef(value: unknown): value is ModelFallbackModelRef {
+	return (
+		isRecord(value) &&
+		typeof value.provider === "string" &&
+		value.provider.trim().length > 0 &&
+		typeof value.id === "string" &&
+		value.id.trim().length > 0 &&
+		Object.keys(value).every((key) => key === "provider" || key === "id")
+	);
+}
+
+function validModelFallbackRefs(value: unknown): value is ModelFallbackModelRef[] {
+	return (
+		Array.isArray(value) &&
+		value.length <= MODEL_FALLBACK_MODELS_LIMIT &&
+		value.every(validModelFallbackRef)
+	);
+}
+
+export function isModelFallbackSettings(value: unknown): value is ModelFallbackSettings {
+	if (
+		!isRecord(value) ||
+		value.version !== MODEL_FALLBACK_SETTINGS_VERSION ||
+		typeof value.enabled !== "boolean" ||
+		!validModelFallbackRefs(value.models) ||
+		!isRecord(value.projects) ||
+		!Object.keys(value).every((key) => ["version", "enabled", "models", "projects"].includes(key))
+	)
+		return false;
+	return Object.entries(value.projects).every(([projectId, override]) => {
+		if (!projectId.trim()) return false;
+		if (!isRecord(override)) return false;
+		if (override.mode === "disabled") return Object.keys(override).every((key) => key === "mode");
+		return (
+			override.mode === "custom" &&
+			validModelFallbackRefs(override.models) &&
+			Object.keys(override).every((key) => key === "mode" || key === "models")
+		);
+	});
+}
+
+export function loadModelFallbackSettings(): ModelFallbackSettings {
+	return readJson("model-fallback.json", DEFAULT_MODEL_FALLBACK_SETTINGS, isModelFallbackSettings);
+}
+
+export function saveModelFallbackSettings(settings: ModelFallbackSettings): void {
+	if (!isModelFallbackSettings(settings)) throw new Error("Invalid model fallback settings");
+	writeJsonAtomic("model-fallback.json", settings);
 }
 
 export function loadHostEnvironment(): HostEnvironment {

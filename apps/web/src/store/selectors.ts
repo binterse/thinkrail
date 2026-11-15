@@ -12,6 +12,7 @@ import {
 	isSessionWorking,
 	MCP_PROTOCOL_VERSION,
 	type McpServerResourceSummary,
+	MODEL_FALLBACK_PROTOCOL_VERSION,
 	MODEL_PICKER_PROTOCOL_VERSION,
 	ONBOARDING_PROTOCOL_VERSION,
 	PROJECT_CLONE_PROTOCOL_VERSION,
@@ -205,6 +206,10 @@ export function supportsChatResources(protocolVersion: number | null): boolean {
 /** Whether the host keeps picker favorites/recents and projects picker metadata onto the catalog. */
 export function selectSupportsModelPicker(state: ProtocolState): boolean {
 	return state.protocolVersion !== null && state.protocolVersion >= MODEL_PICKER_PROTOCOL_VERSION;
+}
+
+export function selectSupportsModelFallback(state: ProtocolState): boolean {
+	return state.protocolVersion !== null && state.protocolVersion >= MODEL_FALLBACK_PROTOCOL_VERSION;
 }
 
 export function isChatResourceScopeAlive(
