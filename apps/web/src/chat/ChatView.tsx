@@ -1,4 +1,5 @@
 import {
+	type ModelFallbackSettings,
 	type PromptHit,
 	type PromptModelSelection,
 	type QueueLane,
@@ -212,6 +213,43 @@ export default function ChatView({
 		return workspace?.kind === "chat" ? null : (workspace?.projectId ?? null);
 	});
 	const supportsModelFallback = useAppStore((s) => selectSupportsModelFallback(s));
+	const [modelFallbackOpen, setModelFallbackOpen] = useState(false);
+	const [modelFallbackSettings, setModelFallbackSettings] = useState<ModelFallbackSettings | null>(
+		null,
+	);
+	const [modelFallbackError, setModelFallbackError] = useState<string | null>(null);
+	const [modelFallbackSaving, setModelFallbackSaving] = useState(false);
+	useEffect(() => {
+		if (!modelFallbackOpen) return;
+		let active = true;
+		setModelFallbackSettings(null);
+		setModelFallbackError(null);
+		const transport = getTransport();
+		const unsubscribe = transport.subscribe(WS_CHANNELS.modelFallbackChanged, (data) => {
+			if (active) setModelFallbackSettings(data as ModelFallbackSettings);
+		});
+		void transport.request("modelFallback.get", { workspaceId }).then(
+			(result) => {
+				if (active) setModelFallbackSettings(result.settings);
+			},
+			() => {
+				if (active) setModelFallbackError(translate("chat.modelFallback.loadFailed"));
+			},
+		);
+		return () => {
+			active = false;
+			unsubscribe();
+		};
+	}, [connectionGeneration, modelFallbackOpen, workspaceId]);
+	const saveModelFallbackSettings = useCallback((settings: ModelFallbackSettings) => {
+		setModelFallbackError(null);
+		setModelFallbackSaving(true);
+		void getTransport()
+			.request("modelFallback.update", { settings })
+			.then(setModelFallbackSettings)
+			.catch(() => setModelFallbackError(translate("chat.modelFallback.saveFailed")))
+			.finally(() => setModelFallbackSaving(false));
+	}, []);
 	const [skillsOpen, setSkillsOpen] = useState(false);
 	const skillsStale = useAppStore((s) => selectSkillsStale(s, workspaceId, sessionId));
 	const workspaceRoot = useAppStore(
@@ -1022,9 +1060,16 @@ export default function ChatView({
 				/>
 				<Composer
 					ref={composerRef}
-					workspaceId={workspaceId}
-					modelFallbackProjectId={modelFallbackProjectId}
 					supportsModelFallback={supportsModelFallback}
+					modelFallback={{
+						projectId: modelFallbackProjectId,
+						open: modelFallbackOpen,
+						onOpenChange: setModelFallbackOpen,
+						settings: modelFallbackSettings,
+						error: modelFallbackError,
+						saving: modelFallbackSaving,
+						onSave: saveModelFallbackSettings,
+					}}
 					value={draft}
 					onChange={(v) => {
 						useAppStore.getState().setChatDraft(sessionId, v);

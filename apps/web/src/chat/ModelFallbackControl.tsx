@@ -11,7 +11,7 @@ import type {
 	ModelFallbackSettings,
 	WireModel,
 } from "@thinkrail/contracts";
-import { MODEL_FALLBACK_MODELS_LIMIT, sameModel, WS_CHANNELS } from "@thinkrail/contracts";
+import { MODEL_FALLBACK_MODELS_LIMIT, sameModel } from "@thinkrail/contracts";
 import { useT } from "@thinkrail/locales/react";
 import { Button, IconButton } from "@thinkrail/ui/button";
 import {
@@ -31,8 +31,7 @@ import {
 } from "@thinkrail/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@thinkrail/ui/popover";
 import { Switch } from "@thinkrail/ui/switch";
-import { useEffect, useMemo, useState } from "react";
-import { getTransport } from "@/transport";
+import { useMemo, useState } from "react";
 
 type ProjectMode = "inherit" | "disabled" | "custom";
 const PROJECT_MODES = [
@@ -160,49 +159,25 @@ function ListEditor({
 }
 
 export function ModelFallbackControl({
-	workspaceId,
 	projectId,
 	models,
+	open,
+	onOpenChange,
+	settings,
+	error,
+	saving,
+	onSave,
 }: {
-	workspaceId: string;
 	projectId: string | null;
 	models: WireModel[];
+	open: boolean;
+	onOpenChange: (open: boolean) => void;
+	settings: ModelFallbackSettings | null;
+	error: string | null;
+	saving: boolean;
+	onSave: (settings: ModelFallbackSettings) => void;
 }) {
 	const t = useT();
-	const [open, setOpen] = useState(false);
-	const [settings, setSettings] = useState<ModelFallbackSettings | null>(null);
-	const [error, setError] = useState<string | null>(null);
-	const [saving, setSaving] = useState(false);
-	useEffect(() => {
-		if (!open) return;
-		let current = true;
-		const transport = getTransport();
-		const unsubscribe = transport.subscribe(WS_CHANNELS.modelFallbackChanged, (data) => {
-			if (current) setSettings(data as ModelFallbackSettings);
-		});
-		void transport.request("modelFallback.get", { workspaceId }).then(
-			(result) => {
-				if (current) setSettings(result.settings);
-			},
-			() => {
-				if (current) setError(t("chat.modelFallback.loadFailed"));
-			},
-		);
-		return () => {
-			current = false;
-			unsubscribe();
-		};
-	}, [open, t, workspaceId]);
-
-	const save = (next: ModelFallbackSettings) => {
-		setError(null);
-		setSaving(true);
-		void getTransport()
-			.request("modelFallback.update", { settings: next })
-			.then(setSettings)
-			.catch(() => setError(t("chat.modelFallback.saveFailed")))
-			.finally(() => setSaving(false));
-	};
 	const override = projectId ? settings?.projects[projectId] : undefined;
 	const mode = projectMode(override);
 	const customModels = override?.mode === "custom" ? (override.models ?? []) : [];
@@ -212,11 +187,11 @@ export function ModelFallbackControl({
 		if (nextMode === "inherit") delete projects[projectId];
 		else if (nextMode === "disabled") projects[projectId] = { mode: "disabled" };
 		else projects[projectId] = { mode: "custom", models: [...settings.models] };
-		save({ ...settings, projects });
+		onSave({ ...settings, projects });
 	};
 	const setProjectModels = (nextModels: ModelFallbackModelRef[]) => {
 		if (!settings || !projectId) return;
-		save({
+		onSave({
 			...settings,
 			projects: { ...settings.projects, [projectId]: { mode: "custom", models: nextModels } },
 		});
@@ -228,9 +203,9 @@ export function ModelFallbackControl({
 				label={t("chat.modelFallback.button")}
 				tooltip={t("chat.modelFallback.button")}
 				size="m"
-				onClick={() => setOpen(true)}
+				onClick={() => onOpenChange(true)}
 			/>
-			<Dialog open={open} onOpenChange={setOpen}>
+			<Dialog open={open} onOpenChange={onOpenChange}>
 				<DialogContent className="max-h-[85vh] max-w-[36rem] overflow-y-auto">
 					<DialogHeader>
 						<DialogTitle>{t("chat.modelFallback.title")}</DialogTitle>
@@ -246,7 +221,7 @@ export function ModelFallbackControl({
 									checked={settings.enabled}
 									label={t("chat.modelFallback.globalEnabled")}
 									disabled={saving}
-									onCheckedChange={(enabled) => save({ ...settings, enabled })}
+									onCheckedChange={(enabled) => onSave({ ...settings, enabled })}
 								/>
 							</div>
 							<div className="flex flex-col gap-8">
@@ -257,7 +232,7 @@ export function ModelFallbackControl({
 									models={settings.models}
 									options={models}
 									disabled={saving}
-									onChange={(nextModels) => save({ ...settings, models: nextModels })}
+									onChange={(nextModels) => onSave({ ...settings, models: nextModels })}
 								/>
 							</div>
 							{projectId ? (
